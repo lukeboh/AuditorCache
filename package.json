@@ -1,0 +1,36 @@
+{
+  "name": "auditor-cache",
+  "version": "1.0.0",
+  "description": "Sistema autônomo e contínuo de auditoria forense, validação cronológica e medição de SLA de propagação entre Origem (HMG) e Cache/CDN (SIM) dos arquivos da totalização de eleições do Tribunal Superior Eleitoral (TSE).",
+  "main": "monitor_tdtot.js",
+  "scripts": {
+    "start": "node monitor_tdtot.js",
+    "monitor": "powershell -ExecutionPolicy Bypass -File ./iniciar_monitor.ps1",
+    "feed": "powershell -ExecutionPolicy Bypass -File ./terminal_feed.ps1",
+    "test:parse": "node test_parse.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukeboh/AuditorCache.git"
+  },
+  "keywords": [
+    "tse",
+    "auditoria",
+    "eleicoes",
+    "cache",
+    "cdn",
+    "sla",
+    "forense",
+    "tdtot",
+    "totalizacao"
+  ],
+  "author": "Luciano Bohnert <luciano.bohnert@tse.jus.br>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/lukeboh/AuditorCache/issues"
+  },
+  "homepage": "https://github.com/lukeboh/AuditorCache#readme",
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

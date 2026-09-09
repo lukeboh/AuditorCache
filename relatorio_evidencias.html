@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dossiê de Auditoria: Fonte HMG vs Cache SIM (TDTot TSE)</title>
+  <style>
+    :root {
+      --bg: #0b132b;
+      --card-bg: #1c2541;
+      --border: #3a506b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-blue: #38bdf8;
+      --accent-yellow: #f59e0b;
+      --accent-purple: #a855f7;
+      --accent-pink: #ec4899;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 24px; line-height: 1.5; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 10px; color: #f8fafc; }
+    h2 { font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+
+    /* KPIS */
+    .stats-grid { display: grid; grid-template-columns: 0.8fr 0.8fr 1.1fr 2.4fr 2.2fr; gap: 10px; margin-bottom: 18px; align-items: stretch; }
+    @media (max-width: 1300px) { .stats-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 700px) { .stats-grid { grid-template-columns: 1fr; } }
+    .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+    .stat-label { color: var(--text-muted); font-size: 0.70rem; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+    .stat-value { font-size: 1.5rem; font-weight: 700; }
+
+    /* FILTROS */
+    .filter-panel { background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-label { font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.05em; }
+    .filter-select, .search-input { background: #0f172a; color: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px; font-size: 0.84rem; outline: none; transition: border-color 0.2s; }
+    .filter-select:focus, .search-input:focus { border-color: var(--accent-blue); }
+    .search-input { min-width: 240px; }
+    .btn-reset { background: #334155; color: #f8fafc; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.80rem; font-weight: 600; }
+    .btn-reset:hover { background: #475569; }
+
+    /* TABELA */
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.84rem; }
+    th { color: var(--text-muted); padding: 11px 9px; border-bottom: 1px solid var(--border); font-weight: 600; background: rgba(0,0,0,0.25); user-select: none; }
+    th.sortable { cursor: pointer; transition: all 0.15s; }
+    th.sortable:hover { background: rgba(56, 189, 248, 0.15); color: #fff; }
+    .sort-icon { font-size: 0.70rem; margin-left: 4px; opacity: 0.5; }
+    th.sorted-asc .sort-icon, th.sorted-desc .sort-icon { opacity: 1; color: var(--accent-blue); font-weight: bold; }
+    td { padding: 10px 9px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
+    tr:hover { background: rgba(255,255,255,0.025); }
+
+    .badge { padding: 3px 7px; border-radius: 5px; font-size: 0.72rem; font-weight: 700; display: inline-block; white-space: nowrap; }
+    .badge-sync { background: #065f46; color: #a7f3d0; }
+    .badge-lag { background: #78350f; color: #fde68a; border: 1px solid #d97706; }
+    .badge-ahead { background: #1e3a8a; color: #bfdbfe; border: 1px solid #3b82f6; }
+    .badge-danger { background: #991b1b; color: #fecaca; }
+    .badge-purple { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+    .badge-yellow { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+
+    .tag-pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.70rem; font-weight: 600; margin-right: 4px; }
+    .tag-eleicao { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+    .tag-uf { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: bold; }
+    .tag-tipo { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .tag-pleito { background: rgba(236, 72, 153, 0.15); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.35); font-weight: 700; }
+    .tag-cargo { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .tag-hmg-title { color: var(--accent-purple); font-weight: 700; }
+    .tag-sim-title { color: var(--accent-blue); font-weight: 700; }
+
+    .btn { background: #7c3aed; color: white; border: none; padding: 7px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.80rem; }
+    .btn:hover { background: #6d28d9; }
+    .btn-copy { cursor: pointer; border: 1px solid #475569; background: #1e293b; color: #cbd5e1; border-radius: 5px; padding: 2px 7px; font-size: 0.72rem; font-weight: 500; }
+    .btn-copy:hover { background: #334155; color: #fff; border-color: #64748b; }
+
+    /* ABAS DO DOSSIÊ */
+    .tabs-nav { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .tab-btn { background: transparent; border: none; color: var(--text-muted); font-size: 0.90rem; font-weight: 600; padding: 8px 16px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+    .tab-btn:hover { color: #fff; background: rgba(255,255,255,0.05); }
+    .tab-btn.active { color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); }
+
+    /* AUTO REFRESH TOGGLE */
+    .live-pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block; box-shadow: 0 0 8px #10b981; animation: pulseLive 2s infinite; }
+    @keyframes pulseLive { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>🗳️ Dossiê Técnico de Auditoria Forense Dinâmico</h1>
+      <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
+        Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
+        <span class="live-pulse"></span>
+        <span style="color: #34d399; font-weight: 600;">Dossiê Dinâmico</span>
+        <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(atualizado agora)</span>
+      </div>
+      <button onclick="loadReportData()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Atualizar dados do dossiê">↺ Atualizar</button>
+      <a href="/" target="_blank" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem;" title="Abrir Dashboard Principal">📊 Abrir Dashboard</a>
+    </div>
+  </header>
+
+  <!-- KPIS PROPORCIONAIS DO DOSSIÊ -->
+  <div class="stats-grid">
+    <div class="stat-card" style="border-left: 3px solid #64748b;">
+      <div class="stat-label">Arquivos Monitorados</div>
+      <div class="stat-value" id="kpiFiles">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Filtrados: <span id="kpiFilesVisible" style="color: #38bdf8; font-weight: bold;">0</span></div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #ef4444;">
+      <div class="stat-label">Regressões (Rodada)</div>
+      <div class="stat-value" id="kpiRegs" style="color: #f87171;">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #f59e0b;">
+      <div class="stat-label">Cache Atrasado</div>
+      <div class="stat-value" id="kpiDesync" style="color: #fbbf24;">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Arquivos desatualizados</div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #10b981;">
+      <div class="stat-label" style="display: flex; justify-content: space-between;">
+        <span>SLA Sync Cache (DG/HG)</span>
+        <span style="color: #34d399;">Hoje</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
+        <div><div style="font-size: 0.65rem; color: var(--text-muted);">MÉDIA</div><div id="slaAvg" style="font-size: 1.05rem; font-weight: 700; color: #fbbf24;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P90</div><div id="slaP90" style="font-size: 1.05rem; font-weight: 700; color: #fb923c;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P95</div><div id="slaP95" style="font-size: 1.05rem; font-weight: 700; color: #f87171;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P99</div><div id="slaP99" style="font-size: 1.05rem; font-weight: 700; color: #ef4444;">0m 00s</div></div>
+      </div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #38bdf8;">
+      <div class="stat-label" style="display: flex; justify-content: space-between;">
+        <span>Atributos HTTP & Edge Cache</span>
+        <span style="color: #38bdf8;">AKAMAI</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
+        <div><div style="font-size: 0.65rem; color: var(--text-muted);">SIM TTL</div><div id="kpiTtl" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8;">~60s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">HIT RATE</div><div id="kpiHitRate" style="font-size: 1.15rem; font-weight: 700; color: #34d399;">100%</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">ORIGEM</div><div style="font-size: 0.82rem; font-weight: 600; color: #c084fc;">Apache</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAVEGAÇÃO ENTRE SEÇÕES -->
+  <div class="tabs-nav">
+    <button id="tabBtnComp" class="tab-btn active" onclick="switchTab('comp')">📊 1. Comparativo de Propagação e SLA de Sincronização</button>
+    <button id="tabBtnRegs" class="tab-btn" onclick="switchTab('regs')">🚨 2. Registro Detalhado de Regressões Temporais (<span id="tabRegsBadge">0</span>)</button>
+  </div>
+
+  <!-- PAINEL DE FILTROS UNIFICADO -->
+  <div class="card" style="padding: 14px 18px; margin-bottom: 16px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <strong style="font-size: 0.90rem; color: #f8fafc;">🔍 Filtros Multidimensionais</strong>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <span id="activeFiltersBadge" style="font-size: 0.72rem; background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); padding: 2px 8px; border-radius: 9999px; display: none;">Filtros Ativos</span>
+        <button class="btn-reset" onclick="resetFilters()" style="padding: 4px 10px; font-size: 0.75rem;">↺ Limpar Filtros</button>
+      </div>
+    </div>
+
+    <div class="filter-panel" style="margin-bottom: 0; padding: 0; border: none; background: transparent;">
+      <div class="filter-group">
+        <label class="filter-label">Busca Textual</label>
+        <input type="text" id="searchInput" class="search-input" placeholder="Buscar por arquivo, UF, cargo..." oninput="applyFilters()">
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Servidor</label>
+        <select id="filterServidor" class="filter-select" onchange="applyFilters()">
+          <option value="">Todos os Servidores</option>
+          <option value="HMG">HMG (Origem Primária)</option>
+          <option value="SIM">SIM (Cache Akamai CDN)</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Rodada</label>
+        <select id="filterRodada" class="filter-select" onchange="applyFilters()">
+          <option value="">Carregando rodadas...</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Pleito</label>
+        <select id="filterPleito" class="filter-select" onchange="applyFilters()">
+          <option value="">Todos os Pleitos</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Eleição</label>
+        <select id="filterEleicao" class="filter-select" onchange="applyFilters()">
+          <option value="">Todas as Eleições</option>
+          <option value="21270">21270 - Federal 1º T</option>
+          <option value="21272">21272 - Estadual 1º T</option>
+          <option value="Comum">Comum (Geral)</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">UF</label>
+        <select id="filterUf" class="filter-select" onchange="applyFilters()">
+          <option value="">Todas as UFs</option>
+          <option value="BR">BR (Brasil Geral)</option>
+          <option value="AC">AC</option><option value="AL">AL</option><option value="AM">AM</option><option value="AP">AP</option>
+          <option value="BA">BA</option><option value="CE">CE</option><option value="DF">DF</option><option value="ES">ES</option>
+          <option value="GO">GO</option><option value="MA">MA</option><option value="MG">MG</option><option value="MS">MS</option>
+          <option value="MT">MT</option><option value="PA">PA</option><option value="PB">PB</option><option value="PE">PE</option>
+          <option value="PI">PI</option><option value="PR">PR</option><option value="RJ">RJ</option><option value="RN">RN</option>
+          <option value="RO">RO</option><option value="RR">RR</option><option value="RS">RS</option><option value="SC">SC</option>
+          <option value="SE">SE</option><option value="SP">SP</option><option value="TO">TO</option><option value="ZZ">ZZ (Exterior)</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Tipo de Arquivo</label>
+        <select id="filterTipo" class="filter-select" onchange="applyFilters()">
+          <option value="">Todos os Tipos</option>
+          <option value="Totalização">Totalização / Resultados (-u.json)</option>
+          <option value="Abrangência">Abrangência / Resumo Geral (-ab.json)</option>
+          <option value="Configuração de Seção">Configuração de Seção (-cs.json)</option>
+          <option value="Configuração">Configurações Gerais (-cm / -c.json)</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Cargo</label>
+        <select id="filterCargo" class="filter-select" onchange="applyFilters()">
+          <option value="">Todos os Cargos</option>
+          <option value="Presidente">Presidente</option>
+          <option value="Governador">Governador</option>
+          <option value="Senador">Senador</option>
+          <option value="Dep. Federal">Deputado Federal</option>
+          <option value="Dep. Estadual">Deputado Estadual</option>
+          <option value="Dep. Distrital">Deputado Distrital</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label">Status / Integridade</label>
+        <select id="filterStatus" class="filter-select" onchange="applyFilters()">
+          <option value="">Todos os Status</option>
+          <option value="REG_ALL">🚨 Qualquer Regressão Detectada</option>
+          <option value="REG_TIME">🚨 Regressão de Geração (DG/HG)</option>
+          <option value="REG_TOT">🚨 Regressão de Totalização (DT/HT)</option>
+          <option value="REG_ST">🚨 Regressão de Seções (ST)</option>
+          <option value="ATRASADO">⏳ Apenas Cache Atrasado</option>
+          <option value="SINCRONIZADO">✅ Apenas Sincronizados</option>
+          <option value="SIM_TTL_LOW">⚡ SIM TTL Baixo (≤ 15s)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEÇÃO 1: TABELA COMPARATIVA DE PROPAGAÇÃO -->
+  <div id="sectionComp" class="card" style="padding: 14px 18px; position: relative;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <strong style="font-size: 0.95rem; color: #f8fafc;">📊 1. Matriz de Propagação e SLA de Sincronização</strong>
+        <span id="compTableCountBadge" style="font-size: 0.75rem; background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 6px;">(carregando...)</span>
+      </div>
+
+      <!-- SELETOR DINÂMICO DE COLUNAS -->
+      <div style="display: flex; gap: 8px; align-items: center; position: relative;">
+        <button id="btnColSelector" onclick="toggleColumnModal(event)" class="btn" style="background: transparent; border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; height: 30px; padding: 0 12px; font-size: 0.78rem; cursor: pointer;">
+          <span>⚙️ Colunas (<span id="visibleColsCount">8</span>/<span id="totalColsCount">15</span>)</span>
+          <span style="font-size: 0.70rem;">▾</span>
+        </button>
+
+        <div id="colSelectorDropdown" style="display:none; position:absolute; right:0; top:36px; z-index:9999; background:#0f172a; border:1px solid rgba(255,255,255,0.15); box-shadow:0 12px 32px rgba(0,0,0,0.7); border-radius:8px; width:340px; padding:14px; font-size:0.82rem; text-align:left;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px;">
+            <strong style="color:#f8fafc; font-size:0.88rem;">⚙️ Configurar Colunas do Dossiê</strong>
+            <div style="display:flex; gap:5px;">
+              <button onclick="resetDefaultColumns()" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Padrão</button>
+              <button onclick="toggleAllColumns(true)" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Todas</button>
+              <button onclick="toggleColumnModal(event)" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:0.9rem; margin-left:4px;">✕</button>
+            </div>
+          </div>
+          <div style="color:var(--text-muted); font-size:0.72rem; margin-bottom:10px;">
+            Ative ou desative as colunas exibidas no dossiê de auditoria. Suas opções são salvas automaticamente no navegador.
+          </div>
+          <div id="colCheckboxesList" style="display:flex; flex-direction:column; gap:6px; max-height:360px; overflow-y:auto; padding-right:4px;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead id="compTableHead">
+        <tr>
+          <th data-col="classificacao" class="sortable" onclick="setCompSort('classificacao')">Classificação <span id="sort_classificacao" class="sort-icon">⇅</span></th>
+          <th data-col="arquivo" class="sortable" onclick="setCompSort('arquivo')">Caminho do Arquivo & Ações <span id="sort_arquivo" class="sort-icon">⇅</span></th>
+          <th data-col="origin_time" class="sortable" onclick="setCompSort('hmg_time')"><span class="tag-hmg-title">FONTE (HMG)</span><br>Geração (DG/HG) <span id="sort_hmg_time" class="sort-icon">⇅</span></th>
+          <th data-col="replica_time" class="sortable" onclick="setCompSort('sim_time')"><span class="tag-sim-title">CACHE (SIM)</span><br>Geração (DG/HG) <span id="sort_sim_time" class="sort-icon">⇅</span></th>
+          <th data-col="delay_time" class="sortable" onclick="setCompSort('delay_time')" title="Diferença entre data/hora de geração da FONTE e do CACHE">Δ Tempo DG/HG <span id="sort_delay_time" class="sort-icon">⇅</span></th>
+          <th data-col="sync_sla" class="sortable" onclick="setCompSort('sync_sla')" title="Tempo real decorrido até replicação no Cache">SLA Sync (DG/HG) <span id="sort_sync_sla" class="sort-icon">⇅</span></th>
+          <th data-col="cache_ttl" class="sortable" onclick="setCompSort('cache_ttl')" title="Comparativo de Headers HTTP de Cache">⚡ Cache & TTL <span id="sort_cache_ttl" class="sort-icon">⇅</span></th>
+          <th data-col="status" class="sortable" onclick="setCompSort('status')">Integridade <span id="sort_status" class="sort-icon">⇅</span></th>
+          <th data-col="origin_tot" class="sortable" onclick="setCompSort('origin_tot')" title="Totalização apurada na FONTE (DT/HT)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Totalização (DT/HT) <span id="sort_origin_tot" class="sort-icon">⇅</span></th>
+          <th data-col="replica_tot" class="sortable" onclick="setCompSort('replica_tot')" title="Totalização apurada no CACHE (DT/HT)"><span class="tag-sim-title">CACHE (SIM)</span><br>Totalização (DT/HT) <span id="sort_replica_tot" class="sort-icon">⇅</span></th>
+          <th data-col="delay_tot" class="sortable" onclick="setCompSort('delay_tot')" title="Diferença de horário de totalização entre FONTE e CACHE">Δ Tempo DT/HT <span id="sort_delay_tot" class="sort-icon">⇅</span></th>
+          <th data-col="origin_st" class="sortable" onclick="setCompSort('origin_st')" title="Seções apuradas na FONTE (ST / %)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Seções (ST / %) <span id="sort_origin_st" class="sort-icon">⇅</span></th>
+          <th data-col="replica_st" class="sortable" onclick="setCompSort('replica_st')" title="Seções apuradas no CACHE (ST / %)"><span class="tag-sim-title">CACHE (SIM)</span><br>Seções (ST / %) <span id="sort_replica_st" class="sort-icon">⇅</span></th>
+          <th data-col="diff_st" class="sortable" onclick="setCompSort('diff_st')" title="Diferença na quantidade de seções apuradas">Δ Seções <span id="sort_diff_st" class="sort-icon">⇅</span></th>
+          <th data-col="idg" class="sortable" onclick="setCompSort('idg')" title="Identificador Sequencial de Geração (IDG)">IDG <span id="sort_idg" class="sort-icon">⇅</span></th>
+        </tr>
+      </thead>
+      <tbody id="compTableBody">
+        <tr><td colspan="15" style="text-align: center; color: var(--text-muted); padding: 30px;">Carregando dossiê comparativo...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SEÇÃO 2: REGISTRO DETALHADO DE REGRESSÕES TEMPORAIS -->
+  <div id="sectionRegs" class="card" style="padding: 14px 18px; display: none;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <strong style="font-size: 0.95rem; color: #f8fafc;">🚨 2. Dossiê Forense de Regressões Temporais Reais (Auditoria Estrita)</strong>
+        <span id="regsTableCountBadge" style="font-size: 0.75rem; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); padding: 2px 8px; border-radius: 6px;">(carregando...)</span>
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">
+        Clique nos botões de cada caso para inspecionar JSON e Evidências Raw
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" onclick="setRegsSort('id')">ID <span id="sort_reg_id" class="sort-icon">⇅</span></th>
+          <th class="sortable" onclick="setRegsSort('timestamp_iso')">Data/Hora (ISO) <span id="sort_reg_timestamp_iso" class="sort-icon">⇅</span></th>
+          <th class="sortable" onclick="setRegsSort('servidor')">Servidor / Papel <span id="sort_reg_servidor" class="sort-icon">⇅</span></th>
+          <th class="sortable" onclick="setRegsSort('criterio')">Critério <span id="sort_reg_criterio" class="sort-icon">⇅</span></th>
+          <th class="sortable" onclick="setRegsSort('arquivo')">Arquivo Auditado <span id="sort_reg_arquivo" class="sort-icon">⇅</span></th>
+          <th class="sortable" onclick="setRegsSort('motivo')">Motivo / Violação Forense <span id="sort_reg_motivo" class="sort-icon">⇅</span></th>
+          <th>Versão Anterior (Mais Nova)</th>
+          <th>Versão Recebida (Retrocedeu)</th>
+          <th>Totalização / Seções</th>
+          <th>Evidência Gravada</th>
+        </tr>
+      </thead>
+      <tbody id="regsTableBody">
+        <tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">Carregando regressões...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer style="margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.78rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+    <div>Auditoria Técnica de Resultados TDTot TSE - Comparativo Contínuo HMG (Fonte) vs SIM (Distribuição/CDN).</div>
+    <div>Banco de Dados: <code>tdtot_auditoria.db</code> | Atualização Automática: <strong>Ativa (10s)</strong></div>
+  </footer>
+
+  <script>
+    // =====================================================================
+    // SELETOR DINÂMICO DE COLUNAS (COMPARTILHADO COM O DASHBOARD)
+    // =====================================================================
+    const AVAILABLE_COLUMNS = [
+      { id: 'classificacao', label: 'Classificação', default: true, desc: 'Pleito, Eleição, UF, Tipo e Cargo' },
+      { id: 'arquivo',       label: 'Caminho do Arquivo & Ações', default: true, desc: 'Caminho relativo e links de inspeção' },
+      { id: 'origin_time',   label: 'FONTE: Geração (DG/HG)', default: true, desc: 'Data/Hora de geração na Origem' },
+      { id: 'replica_time',  label: 'CACHE: Geração (DG/HG)', default: true, desc: 'Data/Hora de geração no Cache' },
+      { id: 'delay_time',    label: 'Δ Tempo DG/HG', default: true, desc: 'Diferença de geração em Minutos e Segundos' },
+      { id: 'sync_sla',      label: 'SLA Sync (DG/HG)', default: true, desc: 'Tempo real até replicação na borda/cache' },
+      { id: 'cache_ttl',     label: '⚡ Cache & TTL', default: true, desc: 'Cache-Control, max-age e CDN status' },
+      { id: 'status',        label: 'Integridade', default: true, desc: 'Auditoria forense e integridade temporal' },
+      { id: 'origin_tot',    label: 'FONTE: Totalização (DT/HT)', default: false, desc: 'Data/Hora de apuração consolidada na Origem' },
+      { id: 'replica_tot',   label: 'CACHE: Totalização (DT/HT)', default: false, desc: 'Data/Hora de apuração consolidada no Cache' },
+      { id: 'delay_tot',     label: 'Δ Tempo DT/HT', default: false, desc: 'Diferença de fechamento entre Origem e Cache' },
+      { id: 'origin_st',     label: 'FONTE: Seções (ST / %)', default: false, desc: 'Seções apuradas e percentual na Origem' },
+      { id: 'replica_st',    label: 'CACHE: Seções (ST / %)', default: false, desc: 'Seções apuradas e percentual no Cache' },
+      { id: 'diff_st',       label: 'Δ Seções', default: false, desc: 'Diferença de seções apuradas entre Origem e Cache' },
+      { id: 'idg',           label: 'IDG Sequencial', default: false, desc: 'Identificador Sequencial de Geração' }
+    ];
+
+    function getVisibleColumns() {
+      try {
+        const stored = localStorage.getItem('tdtot_visible_columns');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+      return AVAILABLE_COLUMNS.filter(c => c.default).map(c => c.id);
+    }
+
+    function saveVisibleColumns(cols) {
+      try {
+        localStorage.setItem('tdtot_visible_columns', JSON.stringify(cols));
+      } catch (e) {}
+      applyColumnVisibility();
+    }
+
+    function applyColumnVisibility() {
+      const visible = getVisibleColumns();
+      const visibleSet = new Set(visible);
+
+      let styleEl = document.getElementById('dynamicColumnsCss');
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'dynamicColumnsCss';
+        document.head.appendChild(styleEl);
+      }
+
+      let css = '';
+      for (const col of AVAILABLE_COLUMNS) {
+        if (!visibleSet.has(col.id)) {
+          css += '[data-col="' + col.id + '"] { display: none !important; } ';
+        }
+      }
+      styleEl.textContent = css;
+
+      const countEl = document.getElementById('visibleColsCount');
+      if (countEl) countEl.textContent = visible.length;
+      const totalEl = document.getElementById('totalColsCount');
+      if (totalEl) totalEl.textContent = AVAILABLE_COLUMNS.length;
+
+      renderColumnCheckboxes();
+    }
+
+    function renderColumnCheckboxes() {
+      const listEl = document.getElementById('colCheckboxesList');
+      if (!listEl) return;
+      const visible = new Set(getVisibleColumns());
+
+      listEl.innerHTML = AVAILABLE_COLUMNS.map(col => {
+        const isChecked = visible.has(col.id);
+        const isDefault = col.default;
+        return '<label style="display:flex; align-items:flex-start; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; background:' + (isChecked ? 'rgba(56,189,248,0.08)' : 'rgba(255,255,255,0.02)') + '; border:1px solid ' + (isChecked ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.05)') + ';">' +
+          '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' data-col-id="' + col.id + '" onchange="toggleColumn(this.dataset.colId, this.checked)" style="margin-top:3px; accent-color:#38bdf8; cursor:pointer;">' +
+          '<div style="flex:1;">' +
+            '<div style="display:flex; align-items:center; justify-content:space-between;">' +
+              '<span style="font-weight:600; color:' + (isChecked ? '#f8fafc' : '#94a3b8') + '; font-size:0.80rem;">' + col.label + '</span>' +
+              (isDefault ? '<span style="font-size:0.64rem; color:var(--text-muted); background:rgba(255,255,255,0.06); padding:1px 4px; border-radius:3px;">Padrão</span>' : '<span style="font-size:0.64rem; color:#38bdf8; background:rgba(56,189,248,0.1); padding:1px 4px; border-radius:3px;">Opcional</span>') +
+            '</div>' +
+            '<div style="font-size:0.68rem; color:var(--text-muted); line-height:1.2; margin-top:2px;">' + col.desc + '</div>' +
+          '</div>' +
+        '</label>';
+      }).join('');
+    }
+
+    function toggleColumn(colId, enable) {
+      let current = getVisibleColumns();
+      if (enable) {
+        if (!current.includes(colId)) current.push(colId);
+      } else {
+        if (current.length <= 1) {
+          alert('Pelo menos uma coluna deve permanecer visível.');
+          applyColumnVisibility();
+          return;
+        }
+        current = current.filter(id => id !== colId);
+      }
+      saveVisibleColumns(current);
+    }
+
+    function resetDefaultColumns() {
+      const defaults = AVAILABLE_COLUMNS.filter(c => c.default).map(c => c.id);
+      saveVisibleColumns(defaults);
+    }
+
+    function toggleAllColumns(enable) {
+      if (enable) {
+        saveVisibleColumns(AVAILABLE_COLUMNS.map(c => c.id));
+      } else {
+        resetDefaultColumns();
+      }
+    }
+
+    function toggleColumnModal(e) {
+      if (e) e.stopPropagation();
+      const dd = document.getElementById('colSelectorDropdown');
+      if (!dd) return;
+      dd.style.display = (dd.style.display === 'none' || !dd.style.display) ? 'block' : 'none';
+    }
+
+    document.addEventListener('click', (e) => {
+      const dd = document.getElementById('colSelectorDropdown');
+      const btn = document.getElementById('btnColSelector');
+      if (dd && dd.style.display === 'block') {
+        if (!dd.contains(e.target) && !btn.contains(e.target)) {
+          dd.style.display = 'none';
+        }
+      }
+    });
+
+    // =====================================================================
+    // NAVEGAÇÃO DE ABAS
+    // =====================================================================
+    let currentTab = 'comp';
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('tabBtnComp').className = 'tab-btn ' + (tab === 'comp' ? 'active' : '');
+      document.getElementById('tabBtnRegs').className = 'tab-btn ' + (tab === 'regs' ? 'active' : '');
+      document.getElementById('sectionComp').style.display = tab === 'comp' ? 'block' : 'none';
+      document.getElementById('sectionRegs').style.display = tab === 'regs' ? 'block' : 'none';
+    }
+
+    // =====================================================================
+    // ESTADO E ORDENAÇÃO
+    // =====================================================================
+    let rawComparisonList = [];
+    let rawRegressionsList = [];
+    let rawRodadasList = [];
+    let activeRodada = null;
+    let latestApiData = null;
+
+    let compSortCol = 'delay_time';
+    let compSortDir = 'desc';
+
+    let regsSortCol = 'id';
+    let regsSortDir = 'desc';
+
+    function setCompSort(col) {
+      if (compSortCol === col) {
+        compSortDir = (compSortDir === 'asc') ? 'desc' : 'asc';
+      } else {
+        compSortCol = col;
+        compSortDir = (col === 'classificacao' || col === 'arquivo') ? 'asc' : 'desc';
+      }
+      updateCompSortIcons();
+      applyFilters();
+    }
+
+    function setRegsSort(col) {
+      if (regsSortCol === col) {
+        regsSortDir = (regsSortDir === 'asc') ? 'desc' : 'asc';
+      } else {
+        regsSortCol = col;
+        regsSortDir = (col === 'id' || col === 'timestamp_iso') ? 'desc' : 'asc';
+      }
+      updateRegsSortIcons();
+      applyFilters();
+    }
+
+    function updateCompSortIcons() {
+      const cols = ['classificacao', 'arquivo', 'hmg_time', 'sim_time', 'delay_time', 'sync_sla', 'cache_ttl', 'status', 'origin_tot', 'replica_tot', 'delay_tot', 'origin_st', 'replica_st', 'diff_st', 'idg'];
+      for (const c of cols) {
+        const el = document.getElementById('sort_' + c);
+        const th = el ? el.closest('th') : null;
+        if (!el || !th) continue;
+        th.classList.remove('sorted-asc', 'sorted-desc');
+        if (c === compSortCol) {
+          el.textContent = compSortDir === 'asc' ? '▲' : '▼';
+          th.classList.add(compSortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+        } else {
+          el.textContent = '⇅';
+        }
+      }
+    }
+
+    function updateRegsSortIcons() {
+      const cols = ['id', 'timestamp_iso', 'servidor', 'criterio', 'arquivo', 'motivo'];
+      for (const c of cols) {
+        const el = document.getElementById('sort_reg_' + c);
+        const th = el ? el.closest('th') : null;
+        if (!el || !th) continue;
+        th.classList.remove('sorted-asc', 'sorted-desc');
+        if (c === regsSortCol) {
+          el.textContent = regsSortDir === 'asc' ? '▲' : '▼';
+          th.classList.add(regsSortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+        } else {
+          el.textContent = '⇅';
+        }
+      }
+    }
+
+    function formatMinSec(sec) {
+      if (sec === null || sec === undefined || isNaN(sec)) return '-';
+      const s = Math.round(Number(sec));
+      const sign = s < 0 ? '-' : '';
+      const abs = Math.abs(s);
+      const m = Math.floor(abs / 60);
+      const remS = abs % 60;
+      return sign + m + 'm ' + String(remS).padStart(2, '0') + 's';
+    }
+
+    // =====================================================================
+    // CARREGAMENTO DINÂMICO DOS DADOS
+    // =====================================================================
+    async function loadReportData() {
+      try {
+        const [compRes, regsRes, rodadasRes] = await Promise.all([
+          fetch('/api/comparison'),
+          fetch('/api/regressoes?limit=300'),
+          fetch('/api/rodadas')
+        ]);
+
+        const compData = await compRes.json();
+        const regsData = await regsRes.json();
+        const rodadasData = await rodadasRes.json();
+
+        latestApiData = compData;
+        rawComparisonList = compData.comparison || [];
+        rawRegressionsList = regsData.regressoes || [];
+        rawRodadasList = rodadasData.list || [];
+        activeRodada = rodadasData.active || null;
+
+        updateRodadasDropdown();
+        updatePleitosDropdown(rawComparisonList);
+        updateKpis(compData, regsData);
+        applyFilters();
+
+        const lrEl = document.getElementById('lastRefreshTime');
+        if (lrEl) lrEl.textContent = '(' + new Date().toLocaleTimeString('pt-BR') + ')';
+      } catch(e) {
+        console.error('Erro ao carregar dados do dossiê:', e);
+      }
+    }
+
+    function updateKpis(compData, regsData) {
+      document.getElementById('kpiFiles').textContent = compData.comparison.length;
+      document.getElementById('kpiRegs').textContent = regsData.total || compData.regressionsTimeCount || 0;
+      document.getElementById('tabRegsBadge').textContent = regsData.total || compData.regressionsTimeCount || 0;
+      document.getElementById('kpiLastReg').textContent = compData.lastRegressionTime || '-';
+
+      let desync = 0;
+      for (const r of compData.comparison) {
+        if (r.comparison?.status === 'CACHE_ATRASADO') desync++;
+      }
+      document.getElementById('kpiDesync').textContent = desync;
+
+      if (compData.todaySlaStats) {
+        document.getElementById('slaAvg').textContent = formatMinSec(compData.todaySlaStats.avgSec);
+        document.getElementById('slaP90').textContent = formatMinSec(compData.todaySlaStats.p90Sec);
+        document.getElementById('slaP95').textContent = formatMinSec(compData.todaySlaStats.p95Sec);
+        document.getElementById('slaP99').textContent = formatMinSec(compData.todaySlaStats.p99Sec);
+      }
+
+      if (compData.cacheStats) {
+        document.getElementById('kpiTtl').textContent = compData.cacheStats.simAvgTtl + 's';
+        document.getElementById('kpiHitRate').textContent = compData.cacheStats.cdnHitRate + '%';
+      }
+    }
+
+    function updateRodadasDropdown() {
+      const sel = document.getElementById('filterRodada');
+      if (!sel) return;
+      const curVal = sel.value;
+      sel.innerHTML = '<option value="">Todas as Rodadas</option>';
+      for (const r of rawRodadasList) {
+        const opt = document.createElement('option');
+        opt.value = String(r.id);
+        const ativoTag = r.ativo ? ' [ATIVA]' : '';
+        opt.textContent = '#' + r.id + ' ' + r.nome + ativoTag;
+        sel.appendChild(opt);
+      }
+      if (curVal) sel.value = curVal;
+      else if (activeRodada) sel.value = String(activeRodada.id);
+    }
+
+    function updatePleitosDropdown(list) {
+      const sel = document.getElementById('filterPleito');
+      if (!sel) return;
+      const curVal = sel.value;
+      const pleitos = new Set();
+      for (const r of list) {
+        if (r.meta?.pleito && r.meta.pleito !== '-' && r.meta.pleito !== 'Todos') {
+          pleitos.add(r.meta.pleito);
+        }
+      }
+      const sorted = Array.from(pleitos).sort();
+      sel.innerHTML = '<option value="">Todos os Pleitos</option>';
+      for (const p of sorted) {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = 'Pleito ' + p;
+        sel.appendChild(opt);
+      }
+      if (curVal && sorted.includes(curVal)) sel.value = curVal;
+    }
+
+    function resetFilters() {
+      document.getElementById('searchInput').value = '';
+      document.getElementById('filterServidor').value = '';
+      if (activeRodada) document.getElementById('filterRodada').value = String(activeRodada.id);
+      else document.getElementById('filterRodada').value = '';
+      document.getElementById('filterPleito').value = '';
+      document.getElementById('filterEleicao').value = '';
+      document.getElementById('filterUf').value = '';
+      document.getElementById('filterTipo').value = '';
+      document.getElementById('filterCargo').value = '';
+      document.getElementById('filterStatus').value = '';
+      applyFilters();
+    }
+
+    // =====================================================================
+    // APLICAÇÃO DE FILTROS E ORDENAÇÃO
+    // =====================================================================
+    function applyFilters() {
+      const q = document.getElementById('searchInput').value.toLowerCase().trim();
+      const fSrv = document.getElementById('filterServidor').value;
+      const fRod = document.getElementById('filterRodada').value;
+      const fPleito = document.getElementById('filterPleito').value;
+      const fEle = document.getElementById('filterEleicao').value;
+      const fUf = document.getElementById('filterUf').value;
+      const fTipo = document.getElementById('filterTipo').value;
+      const fCargo = document.getElementById('filterCargo').value;
+      const fStatus = document.getElementById('filterStatus').value;
+
+      // 1. Filtra Matriz Comparativa
+      const filteredComp = rawComparisonList.filter(row => {
+        const meta = row.meta || {};
+        if (fPleito && meta.pleito !== fPleito && meta.pleito !== 'Todos') return false;
+        if (fEle && meta.eleicao !== fEle) return false;
+        if (fUf && meta.uf !== fUf) return false;
+        if (fTipo) {
+          if (fTipo === 'Configuração' && !meta.tipo.includes('Configuração')) return false;
+          else if (fTipo !== 'Configuração' && meta.tipo !== fTipo) return false;
+        }
+        if (fCargo && meta.cargo !== fCargo) return false;
+
+        if (fSrv) {
+          if (fSrv === 'HMG' && (!row.hmg || !row.hmg.genTime)) return false;
+          if (fSrv === 'SIM' && (!row.sim || !row.sim.genTime)) return false;
+        }
+
+        if (fStatus === 'REG_ALL') {
+          const hasReg = (row.hmg?.status === 'REGRESSAO_DETECTADA' || row.sim?.status === 'REGRESSAO_DETECTADA');
+          if (!hasReg) return false;
+        } else if (fStatus === 'REG_TIME') {
+          const hmgReg = row.hmg?.criterion?.includes('TEMPO') || row.hmg?.criterion?.includes('DG/HG');
+          const simReg = row.sim?.criterion?.includes('TEMPO') || row.sim?.criterion?.includes('DG/HG');
+          if (!hmgReg && !simReg) return false;
+        } else if (fStatus === 'REG_TOT') {
+          const hmgRegTot = row.hmg?.criterion?.includes('TOTALIZAÇÃO');
+          const simRegTot = row.sim?.criterion?.includes('TOTALIZAÇÃO');
+          if (!hmgRegTot && !simRegTot) return false;
+        } else if (fStatus === 'REG_ST') {
+          const hmgRegSt = row.hmg?.criterion?.includes('SEÇÕES');
+          const simRegSt = row.sim?.criterion?.includes('SEÇÕES');
+          if (!hmgRegSt && !simRegSt) return false;
+        } else if (fStatus === 'ATRASADO') {
+          if (row.comparison?.status !== 'CACHE_ATRASADO') return false;
+        } else if (fStatus === 'SINCRONIZADO') {
+          if (row.comparison?.status !== 'SINCRONIZADO') return false;
+        } else if (fStatus === 'SIM_TTL_LOW') {
+          if (!row.sim || row.sim.maxAge === null || row.sim.maxAge > 15) return false;
+        }
+
+        if (q) {
+          const matchPath = row.relPath.toLowerCase().includes(q);
+          const matchCargo = (meta.cargo || '').toLowerCase().includes(q);
+          const matchUf = (meta.uf || '').toLowerCase().includes(q);
+          if (!matchPath && !matchCargo && !matchUf) return false;
+        }
+
+        return true;
+      });
+
+      // 2. Filtra Regressões Forenses
+      let rodadaObj = null;
+      if (fRod) {
+        rodadaObj = rawRodadasList.find(r => String(r.id) === String(fRod));
+      } else if (activeRodada) {
+        rodadaObj = activeRodada;
+      }
+
+      const filteredRegs = rawRegressionsList.filter(reg => {
+        if (rodadaObj) {
+          const regUnix = new Date(reg.timestamp_iso).getTime();
+          if (regUnix < rodadaObj.inicio_unix) return false;
+          if (rodadaObj.fim_unix && regUnix > rodadaObj.fim_unix) return false;
+        }
+
+        if (fSrv && reg.servidor !== fSrv) return false;
+
+        const meta = reg.fileMeta || {};
+        if (fPleito && meta.pleito && meta.pleito !== fPleito && meta.pleito !== 'Todos') return false;
+        if (fEle && meta.eleicao && meta.eleicao !== fEle) return false;
+        if (fUf && meta.uf && meta.uf !== fUf) return false;
+        if (fTipo && meta.tipo) {
+          if (fTipo === 'Configuração' && !meta.tipo.includes('Configuração')) return false;
+          else if (fTipo !== 'Configuração' && meta.tipo !== fTipo) return false;
+        }
+        if (fCargo && meta.cargo && meta.cargo !== fCargo) return false;
+
+        if (fStatus === 'REG_TIME') {
+          if (!reg.criterio?.includes('TEMPO') && !reg.motivo?.includes('TEMPORAL')) return false;
+        } else if (fStatus === 'REG_TOT') {
+          if (!reg.criterio?.includes('TOTALIZAÇÃO') && !reg.motivo?.includes('TOTALIZAÇÃO')) return false;
+        } else if (fStatus === 'REG_ST') {
+          if (!reg.criterio?.includes('SEÇÕES') && !reg.motivo?.includes('SEÇÕES')) return false;
+        }
+
+        if (q) {
+          const matchPath = reg.arquivo.toLowerCase().includes(q);
+          const matchMotivo = (reg.motivo || '').toLowerCase().includes(q);
+          const matchUf = (meta.uf || '').toLowerCase().includes(q);
+          if (!matchPath && !matchMotivo && !matchUf) return false;
+        }
+
+        return true;
+      });
+
+      const hasActiveFilters = Boolean(q || fSrv || fPleito || fEle || fUf || fTipo || fCargo || fStatus || (fRod && activeRodada && fRod !== String(activeRodada.id)));
+      const afb = document.getElementById('activeFiltersBadge');
+      if (afb) afb.style.display = hasActiveFilters ? 'inline-block' : 'none';
+
+      document.getElementById('kpiFilesVisible').textContent = filteredComp.length;
+      document.getElementById('compTableCountBadge').textContent = '(' + filteredComp.length + ' de ' + rawComparisonList.length + ' arquivos)';
+      document.getElementById('regsTableCountBadge').textContent = '(' + filteredRegs.length + ' de ' + rawRegressionsList.length + ' ocorrências)';
+
+      renderCompTable(sortCompData(filteredComp));
+      renderRegsTable(sortRegsData(filteredRegs));
+    }
+
+    function sortCompData(rows) {
+      return [...rows].sort((a, b) => {
+        let vA, vB;
+        switch(compSortCol) {
+          case 'classificacao':
+            vA = (a.meta?.uf || '') + '_' + (a.meta?.cargo || '') + '_' + (a.meta?.tipo || '');
+            vB = (b.meta?.uf || '') + '_' + (b.meta?.cargo || '') + '_' + (b.meta?.tipo || '');
+            break;
+          case 'arquivo':
+            vA = a.relPath.toLowerCase();
+            vB = b.relPath.toLowerCase();
+            break;
+          case 'hmg_time':
+            vA = a.hmg?.genTime ?? -1;
+            vB = b.hmg?.genTime ?? -1;
+            break;
+          case 'sim_time':
+            vA = a.sim?.genTime ?? -1;
+            vB = b.sim?.genTime ?? -1;
+            break;
+          case 'delay_time':
+            vA = Number(a.comparison?.delaySec ?? 0);
+            vB = Number(b.comparison?.delaySec ?? 0);
+            break;
+          case 'sync_sla':
+            vA = Number(a.comparison?.syncSlaSec ?? 0);
+            vB = Number(b.comparison?.syncSlaSec ?? 0);
+            break;
+          case 'cache_ttl':
+            vA = Number(a.sim?.maxAge ?? 0);
+            vB = Number(b.sim?.maxAge ?? 0);
+            break;
+          case 'status':
+            const regA = (a.hmg?.status === 'REGRESSAO_DETECTADA' || a.sim?.status === 'REGRESSAO_DETECTADA') ? 3 : (a.comparison?.status === 'CACHE_ATRASADO' ? 2 : 1);
+            const regB = (b.hmg?.status === 'REGRESSAO_DETECTADA' || b.sim?.status === 'REGRESSAO_DETECTADA') ? 3 : (b.comparison?.status === 'CACHE_ATRASADO' ? 2 : 1);
+            vA = regA;
+            vB = regB;
+            break;
+          case 'origin_tot':
+            vA = (a.origin?.totTime ?? a.hmg?.totTime ?? -1);
+            vB = (b.origin?.totTime ?? b.hmg?.totTime ?? -1);
+            break;
+          case 'replica_tot':
+            vA = (a.sim?.totTime ?? -1);
+            vB = (b.sim?.totTime ?? -1);
+            break;
+          case 'delay_tot':
+            vA = (a.comparison?.delayTotSec ?? 0);
+            vB = (b.comparison?.delayTotSec ?? 0);
+            break;
+          case 'origin_st':
+            vA = Number(a.origin?.st ?? a.hmg?.st ?? -1);
+            vB = Number(b.origin?.st ?? b.hmg?.st ?? -1);
+            break;
+          case 'replica_st':
+            vA = Number(a.sim?.st ?? -1);
+            vB = Number(b.sim?.st ?? -1);
+            break;
+          case 'diff_st':
+            vA = Number(a.comparison?.diffSt ?? 0);
+            vB = Number(b.comparison?.diffSt ?? 0);
+            break;
+          case 'idg':
+            vA = Number(a.origin?.idgNum ?? a.hmg?.idgNum ?? 0);
+            vB = Number(b.origin?.idgNum ?? b.hmg?.idgNum ?? 0);
+            break;
+          default:
+            vA = a.relPath;
+            vB = b.relPath;
+        }
+        if (vA < vB) return compSortDir === 'asc' ? -1 : 1;
+        if (vA > vB) return compSortDir === 'asc' ? 1 : -1;
+        return a.relPath.localeCompare(b.relPath);
+      });
+    }
+
+    function sortRegsData(rows) {
+      return [...rows].sort((a, b) => {
+        let vA, vB;
+        switch(regsSortCol) {
+          case 'id':
+            vA = Number(a.id);
+            vB = Number(b.id);
+            break;
+          case 'timestamp_iso':
+            vA = new Date(a.timestamp_iso).getTime();
+            vB = new Date(b.timestamp_iso).getTime();
+            break;
+          case 'servidor':
+            vA = a.servidor || '';
+            vB = b.servidor || '';
+            break;
+          case 'criterio':
+            vA = a.criterio || '';
+            vB = b.criterio || '';
+            break;
+          case 'arquivo':
+            vA = a.arquivo.toLowerCase();
+            vB = b.arquivo.toLowerCase();
+            break;
+          case 'motivo':
+            vA = a.motivo || '';
+            vB = b.motivo || '';
+            break;
+          default:
+            vA = a.id;
+            vB = b.id;
+        }
+        if (vA < vB) return regsSortDir === 'asc' ? -1 : 1;
+        if (vA > vB) return regsSortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    // =====================================================================
+    // RENDERIZAÇÃO DAS TABELAS
+    // =====================================================================
+    function renderCompTable(rows) {
+      const tbody = document.getElementById('compTableBody');
+      tbody.innerHTML = '';
+      const visibleCols = getVisibleColumns();
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="' + visibleCols.length + '" style="text-align: center; color: var(--text-muted); padding: 30px;">Nenhum arquivo corresponde aos filtros aplicados.</td></tr>';
+        return;
+      }
+
+      for (const row of rows) {
+        const meta = row.meta || {};
+        const tr = document.createElement('tr');
+
+        // Badge Atraso DG/HG
+        let delayTimeBadge = '<span class="badge badge-sync">0m 00s</span>';
+        if (row.comparison?.statusTime === 'CACHE_ATRASADO') {
+          delayTimeBadge = '<span class="badge badge-lag">' + row.comparison.textTime + '</span>';
+        } else if (row.comparison?.statusTime === 'CACHE_A_FRENTE') {
+          delayTimeBadge = '<span class="badge badge-ahead">' + row.comparison.textTime + '</span>';
+        } else if (row.comparison?.statusTime === 'SEM_TIMESTAMP') {
+          delayTimeBadge = '<span class="badge" style="background:#334155">-</span>';
+        }
+
+        // Origem
+        const originMeta = row.origin || row.hmg;
+        const originIdgTag = originMeta && originMeta.idg ? '<br><span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace;">IDG: ' + originMeta.idg + '</span>' : '';
+        const originHg = originMeta ? '<a href="' + (row.originUrl || row.hmgUrl) + '" target="_blank" style="color:var(--accent-purple); text-decoration:none;" title="Abrir JSON da Origem"><strong style="font-size:0.95rem;">' + originMeta.hg + ' ↗</strong></a><br><span style="font-size:0.75rem;color:var(--text-muted);">' + originMeta.dg + '</span>' + originIdgTag : '<span style="color:#64748b">Pendente</span>';
+
+        // Réplica
+        const simMeta = row.sim;
+        const simIdgTag = simMeta && simMeta.idg ? '<br><span style="font-size:0.70rem; color:var(--text-muted); font-family:monospace;">IDG: ' + simMeta.idg + '</span>' : '';
+        const simHg = simMeta ? '<a href="' + row.simUrl + '" target="_blank" style="color:var(--accent-blue); text-decoration:none;" title="Abrir JSON do Cache"><strong style="font-size:0.95rem;">' + simMeta.hg + ' ↗</strong></a><br><span style="font-size:0.75rem;color:var(--text-muted);">' + simMeta.dg + '</span>' + simIdgTag : '<span style="color:#64748b">Pendente</span>';
+
+        // SLA Sync
+        let syncSlaBadge = '<span class="badge" style="background:#334155">-</span>';
+        if (row.comparison?.syncSlaStatus === 'OK') syncSlaBadge = '<span class="badge badge-sync">⚡ ' + row.comparison.syncSlaText + '</span>';
+        else if (row.comparison?.syncSlaStatus === 'ALERTA') syncSlaBadge = '<span class="badge badge-lag">⚠️ ' + row.comparison.syncSlaText + '</span>';
+        else if (row.comparison?.syncSlaStatus === 'CRITICO') syncSlaBadge = '<span class="badge badge-danger">' + row.comparison.syncSlaText + '</span>';
+
+        // Status Integridade
+        let orderStatus = '<span class="badge badge-sync">OK</span>';
+        const hasReg = (row.hmg?.status === 'REGRESSAO_DETECTADA' || row.sim?.status === 'REGRESSAO_DETECTADA');
+        if (hasReg) {
+          const regSrv = row.hmg?.status === 'REGRESSAO_DETECTADA' ? 'HMG' : 'SIM';
+          const regCrit = (row.hmg?.status === 'REGRESSAO_DETECTADA' ? row.hmg?.criterion : row.sim?.criterion) || 'REGRESSÃO';
+          orderStatus = '<span class="badge badge-danger">REGRESSÃO (' + regSrv + '): ' + regCrit + '</span>';
+        }
+
+        // Totalização DT/HT
+        let originTotCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (originMeta?.dt && originMeta?.ht) {
+          originTotCell = '<div style="display:flex; flex-direction:column; gap:1px;"><strong style="color:var(--accent-purple); font-size:0.88rem;">' + originMeta.ht + '</strong><span style="font-size:0.72rem; color:var(--text-muted);">' + originMeta.dt + '</span></div>';
+        }
+
+        let replicaTotCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (row.sim?.dt && row.sim?.ht) {
+          replicaTotCell = '<div style="display:flex; flex-direction:column; gap:1px;"><strong style="color:var(--accent-blue); font-size:0.88rem;">' + row.sim.ht + '</strong><span style="font-size:0.72rem; color:var(--text-muted);">' + row.sim.dt + '</span></div>';
+        }
+
+        let delayTotCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (originMeta?.totTime !== null && originMeta?.totTime !== undefined && row.sim?.totTime !== null && row.sim?.totTime !== undefined) {
+          const diffTot = Math.round((originMeta.totTime - row.sim.totTime) / 1000);
+          if (diffTot === 0) delayTotCell = '<span class="badge badge-sync">0m 00s</span>';
+          else if (diffTot > 0) delayTotCell = '<span class="badge badge-lag">-' + formatMinSec(diffTot) + '</span>';
+          else delayTotCell = '<span class="badge badge-ahead">+' + formatMinSec(-diffTot) + '</span>';
+        }
+
+        // Seções ST
+        let originStCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (originMeta?.st !== null && originMeta?.st !== undefined) {
+          originStCell = '<div style="display:flex; flex-direction:column; gap:1px;"><strong style="color:#10b981; font-size:0.88rem;">' + Number(originMeta.st).toLocaleString('pt-BR') + '</strong><span class="badge badge-sync" style="font-size:0.65rem; padding:1px 4px; width:fit-content;">' + (originMeta.pst || '0,00') + '%</span></div>';
+        }
+
+        let replicaStCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (row.sim?.st !== null && row.sim?.st !== undefined) {
+          replicaStCell = '<div style="display:flex; flex-direction:column; gap:1px;"><strong style="color:#38bdf8; font-size:0.88rem;">' + Number(row.sim.st).toLocaleString('pt-BR') + '</strong><span class="badge badge-sync" style="font-size:0.65rem; padding:1px 4px; width:fit-content;">' + (row.sim.pst || '0,00') + '%</span></div>';
+        }
+
+        let diffStCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (originMeta?.st !== null && originMeta?.st !== undefined && row.sim?.st !== null && row.sim?.st !== undefined) {
+          const diffSt = Number(originMeta.st) - Number(row.sim.st);
+          if (diffSt === 0) diffStCell = '<span class="badge badge-sync">0 seç</span>';
+          else if (diffSt > 0) diffStCell = '<span class="badge badge-lag">-' + diffSt + ' seç</span>';
+          else diffStCell = '<span class="badge badge-ahead">+' + (-diffSt) + ' seç</span>';
+        }
+
+        // IDG
+        let idgCell = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (originMeta?.idg || row.sim?.idg) {
+          idgCell = '<div style="font-family:monospace; font-size:0.76rem;"><div>HMG: <strong style="color:var(--accent-purple);">' + (originMeta?.idg || '-') + '</strong></div><div>SIM: <strong style="color:var(--accent-blue);">' + (row.sim?.idg || '-') + '</strong></div></div>';
+        }
+
+        // Cache TTL
+        const cacheTtlCell = '<div style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem;">' +
+          '<div><span class="tag-pill tag-uf" style="font-size:0.65rem;">HMG</span><span style="font-family:monospace; color:#c084fc;">' + (row.hmg?.cacheControl || '(sem header)') + '</span></div>' +
+          '<div><span class="tag-pill tag-eleicao" style="font-size:0.65rem;">SIM</span><span style="font-family:monospace; color:#38bdf8; font-weight:bold;">' + (row.sim?.cacheControl || (row.sim?.maxAge !== null ? 'max-age=' + row.sim.maxAge : '-')) + '</span></div>' +
+        '</div>';
+
+        tr.innerHTML = 
+          '<td data-col="classificacao" style="min-width: 130px;">' +
+            '<div style="margin-bottom: 4px; display: flex; gap: 4px; flex-wrap: wrap;">' +
+              '<span class="tag-pill tag-pleito">Pl: ' + (meta.pleito || '-') + '</span>' +
+              '<span class="tag-pill tag-eleicao">' + meta.eleicao + '</span>' +
+              '<span class="tag-pill tag-uf">' + meta.uf + '</span>' +
+            '</div>' +
+            '<div>' +
+              '<span class="tag-pill tag-tipo">' + meta.tipo + '</span>' +
+              (meta.cargo !== '-' ? '<span class="tag-pill tag-cargo">' + meta.cargo + '</span>' : '') +
+            '</div>' +
+          '</td>' +
+          '<td data-col="arquivo" style="min-width: 250px;">' +
+            '<div class="code" style="font-weight:bold; color:#f8fafc; font-size:0.82rem; margin-bottom:4px; word-break:break-all;">' + row.relPath + '</div>' +
+            '<div style="display:flex; gap:6px;">' +
+              '<a href="' + row.hmgUrl + '" target="_blank" class="btn-copy" style="text-decoration:none; color:#c084fc;">↗ HMG</a>' +
+              '<a href="' + row.simUrl + '" target="_blank" class="btn-copy" style="text-decoration:none; color:#38bdf8;">↗ SIM</a>' +
+            '</div>' +
+          '</td>' +
+          '<td data-col="origin_time">' + originHg + '</td>' +
+          '<td data-col="replica_time">' + simHg + '</td>' +
+          '<td data-col="delay_time">' + delayTimeBadge + '</td>' +
+          '<td data-col="sync_sla">' + syncSlaBadge + '</td>' +
+          '<td data-col="cache_ttl">' + cacheTtlCell + '</td>' +
+          '<td data-col="status">' + orderStatus + '</td>' +
+          '<td data-col="origin_tot">' + originTotCell + '</td>' +
+          '<td data-col="replica_tot">' + replicaTotCell + '</td>' +
+          '<td data-col="delay_tot">' + delayTotCell + '</td>' +
+          '<td data-col="origin_st">' + originStCell + '</td>' +
+          '<td data-col="replica_st">' + replicaStCell + '</td>' +
+          '<td data-col="diff_st">' + diffStCell + '</td>' +
+          '<td data-col="idg">' + idgCell + '</td>';
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    function renderRegsTable(rows) {
+      const tbody = document.getElementById('regsTableBody');
+      tbody.innerHTML = '';
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">Nenhuma regressão temporal encontrada para os filtros e rodada selecionados.</td></tr>';
+        return;
+      }
+
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        const srvClass = r.servidor === 'HMG' ? 'badge-purple' : 'badge-yellow';
+        const rawFileName = r.evidencia_raw_path ? r.evidencia_raw_path.split(/[/]/).pop() : '-';
+
+        let totAndSt = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
+        if (r.dt_recebido || r.secoes_recebido) {
+          totAndSt = '<div style="font-size:0.75rem; font-family:monospace;">' +
+            (r.dt_recebido ? '<div>Tot: ' + r.dt_recebido + ' ' + (r.ht_recebido || '') + '</div>' : '') +
+            (r.secoes_recebido ? '<div>Seções: ' + r.secoes_recebido + '</div>' : '') +
+          '</div>';
+        }
+
+        tr.innerHTML = 
+          '<td><strong>#' + r.id + '</strong></td>' +
+          '<td class="code" style="font-size:0.78rem; white-space:nowrap;">' + (r.timestamp_iso ? new Date(r.timestamp_iso).toLocaleString('pt-BR') : '-') + '</td>' +
+          '<td><span class="badge ' + srvClass + '">' + r.servidor + '</span><br><span style="font-size:0.70rem; color:var(--text-muted);">' + (r.papel_servidor || '') + '</span></td>' +
+          '<td><span class="badge badge-danger" style="font-size:0.70rem;">' + (r.criterio || 'TEMPORAL') + '</span></td>' +
+          '<td class="code" style="font-weight:bold; color:#f8fafc; font-size:0.80rem; max-width:260px; word-break:break-all;">' + r.arquivo + '</td>' +
+          '<td style="color:#f87171; font-weight:600; font-size:0.78rem;">' + (r.motivo || '-') + '</td>' +
+          '<td class="code" style="font-size:0.78rem;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '') + (r.idg_anterior ? '<br><span style="font-size:0.70rem; color:var(--text-muted);">IDG: ' + r.idg_anterior + '</span>' : '') + '</td>' +
+          '<td class="code" style="color:#f87171; font-weight:bold; font-size:0.78rem;">' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '') + (r.idg_recebido ? '<br><span style="font-size:0.70rem; opacity:0.85;">IDG: ' + r.idg_recebido + '</span>' : '') + '</td>' +
+          '<td>' + totAndSt + '</td>' +
+          '<td class="code" style="font-size:0.72rem; color:#94a3b8;" title="' + (r.evidencia_raw_path || '') + '">' + rawFileName + '</td>';
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    // Inicialização
+    applyColumnVisibility();
+    loadReportData();
+    setInterval(loadReportData, 10000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Bancos de dados SQLite e journals de concorrência WAL
+*.db
+*.db-shm
+*.db-wal
+
+# Planilhas CSV geradas em tempo de execução
+*.csv
+
+# Logs de anomalias e execução contínua
+*.log
+
+# Diretórios de snapshots e evidências forenses em disco
+evidencias_raw/
+evidencias_raw_purge/
+versoes/
+temp_zips/
+
+# Arquivos compactados de distribuição/backup
+*.zip
+*.tar.gz
+
+# Backups e rascunhos de desenvolvimento
+*.bak
+*.bak_*
+
+# Dependências do Node (caso adicionadas no futuro)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sistema Operacional e Editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
