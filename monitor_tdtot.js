@@ -244,17 +244,28 @@ try { db.exec('ALTER TABLE leituras ADD COLUMN server_ip TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN cache_control TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN cdn_status TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN max_age INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN akamai_grn TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN akamai_grn TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN call_time_iso TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN call_time_unix INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN latency_ms INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN call_time_iso TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN call_time_unix INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN latency_ms INTEGER;'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_arquivo_time ON leituras (arquivo, timestamp_unix);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_call_time ON leituras (arquivo, call_time_unix);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_time ON regressoes (timestamp_iso);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_grn ON regressoes (akamai_grn);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_grn ON leituras (akamai_grn);'); } catch (e) {}
 
 const stmtInsertLeitura = db.prepare(`
-  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertRegressao = db.prepare(`
-  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido, akamai_grn, call_time_iso, call_time_unix, latency_ms)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertComparativo = db.prepare(`
@@ -382,7 +393,11 @@ function hydrateStateFromDb() {
         serverStates[serverKey] = new Map();
       }
       serverStates[serverKey].set(r.arquivo, {
-        timestampIso: r.timestamp_iso,
+        timestampIso: r.call_time_iso || r.timestamp_iso,
+        timestampUnix: r.call_time_unix || r.timestamp_unix,
+        callTimeIso: r.call_time_iso || r.timestamp_iso,
+        callTimeUnix: r.call_time_unix || r.timestamp_unix,
+        latencyMs: r.latency_ms ?? null,
         serverKey: r.servidor,
         relPath: r.arquivo,
         filename: getFilename(r.arquivo),
@@ -390,13 +405,13 @@ function hydrateStateFromDb() {
         idgNum: r.idg ? Number(r.idg) : null,
         dg: r.dg,
         hg: r.hg,
-        genTime: r.gen_time,
-        st: r.secoes,
+        genTime: parseDgHg(r.dg, r.hg),
+        st: (r.secoes !== null && r.secoes !== undefined && String(r.secoes).trim() !== '') ? Number(r.secoes) : null,
         pst: r.secoes_pct,
         vTot: r.votos,
         dt: r.dt || null,
         ht: r.ht || null,
-        totTime: r.tot_time || null,
+        totTime: parseDgHg(r.dt, r.ht),
         etag: r.etag,
         source: 'Banco_SQLite',
         status: r.status_ordem || 'CARREGADO_DB',
@@ -671,11 +686,14 @@ function initLogs() {
 
 function parseDgHg(dg, hg) {
   if (!dg || !hg) return null;
-  const dParts = dg.trim().split('/').map(Number);
-  const hParts = hg.trim().split(':').map(Number);
+  const dParts = String(dg).trim().split('/').map(Number);
+  const hParts = String(hg).trim().split(':').map(Number);
   if (dParts.length < 3 || hParts.length < 2) return null;
   const [d, m, y] = dParts;
-  const [hh, mm, ss] = [hParts[0], hParts[1], hParts[2] || 0];
+  const [hh, mm, ss] = [hParts[0], hParts[1], hParts[2] !== undefined ? hParts[2] : 0];
+  if (isNaN(d) || isNaN(m) || isNaN(y) || isNaN(hh) || isNaN(mm) || isNaN(ss)) return null;
+  if (d < 1 || d > 31 || m < 1 || m > 12 || y < 2000 || y > 2100) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return null;
   return new Date(y, m - 1, d, hh, mm, ss).getTime();
 }
 
@@ -1009,7 +1027,8 @@ function getComparison(relPath) {
       cdnStatus: rState?.cdnCacheStatus || '-',
       etag: rState?.etag || '-',
       serverIp: rState?.serverIp || '-',
-      server: rState?.serverHeader || '-'
+      server: rState?.serverHeader || '-',
+      akamaiGrn: rState?.akamaiGrn || '-'
     });
   }
 
@@ -1033,6 +1052,7 @@ function getComparison(relPath) {
       etag: primaryReplicaState.etag || '-',
       server: primaryReplicaState.serverHeader || 'Edge/CDN',
       serverIp: primaryReplicaState.serverIp || '-',
+      akamaiGrn: primaryReplicaState.akamaiGrn || '-',
       lastModified: primaryReplicaState.lastModifiedHeader || '-'
     },
     ttlMismatch: (originState.maxAge !== primaryReplicaState.maxAge),
@@ -2254,9 +2274,11 @@ function saveVersionInUrlStructure(serverKey, relPath, payload, rawText, meta) {
 function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, meta, isRegression, regressionDetails = null, criterion = 'GERAL') {
   saveVersionInUrlStructure(serverKey, relPath, payload, rawText, meta);
   const filename = getFilename(relPath);
-  const now = new Date();
-  const timestampIso = now.toISOString();
-  const timestampUnix = now.getTime();
+  const timestampIso = meta.callTimeIso || (meta.timestampIso ? meta.timestampIso : new Date().toISOString());
+  const timestampUnix = meta.callTimeUnix || (meta.timestampUnix ? meta.timestampUnix : new Date(timestampIso).getTime());
+  const callTimeIso = meta.callTimeIso || timestampIso;
+  const callTimeUnix = meta.callTimeUnix || timestampUnix;
+  const latencyMs = meta.latencyMs !== undefined ? meta.latencyMs : null;
   const role = SERVERS[serverKey]?.role || serverKey;
 
   let rawFilePath = null;
@@ -2274,9 +2296,13 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
           papel_servidor: role,
           arquivo: filename,
           url_origem: (SERVERS[serverKey]?.baseUrl || '') + relPath,
+          instante_chamada_iso: callTimeIso,
+          instante_chamada_unix: callTimeUnix,
+          latencia_ms: latencyMs,
           timestamp_coleta: timestampIso,
           source,
           headers,
+          akamai_grn: meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
           isRegression,
           criterion,
           regressionDetails
@@ -2296,17 +2322,17 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       serverKey,
       role,
       relPath,
-      meta.idg,
-      meta.dg,
-      meta.hg,
-      meta.genTime,
+      meta.idg || null,
+      meta.dg || null,
+      meta.hg || null,
+      meta.genTime || null,
       meta.st !== null && meta.st !== undefined ? String(meta.st) : null,
-      meta.pst,
-      meta.vTot,
-      meta.etag,
-      meta.status,
-      meta.details,
-      rawFilePath,
+      meta.pst || null,
+      meta.vTot || null,
+      meta.etag || null,
+      meta.status || 'NORMAL',
+      meta.details || 'Leitura realizada',
+      rawFilePath || null,
       meta.dt || null,
       meta.ht || null,
       meta.totTime || null,
@@ -2314,7 +2340,11 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       meta.serverIp || null,
       meta.cacheControl || null,
       meta.cdnCacheStatus || null,
-      meta.maxAge !== null && meta.maxAge !== undefined ? Number(meta.maxAge) : null
+      meta.maxAge !== null && meta.maxAge !== undefined ? Number(meta.maxAge) : null,
+      meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
+      callTimeIso,
+      callTimeUnix,
+      latencyMs
     );
   } catch (e) {
     console.error('Erro ao gravar leitura no SQLite:', e.message);
@@ -2328,22 +2358,26 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
         serverKey,
         role,
         relPath,
-        criterion,
-        meta.details,
-        meta.prevIdg,
-        meta.prevDg,
-        meta.prevHg,
+        criterion || 'REGRESSAO',
+        meta.details || 'Regressão detectada',
+        meta.prevIdg || null,
+        meta.prevDg || null,
+        meta.prevHg || null,
         meta.prevSt !== null && meta.prevSt !== undefined ? String(meta.prevSt) : null,
-        meta.idg,
-        meta.dg,
-        meta.hg,
+        meta.idg || null,
+        meta.dg || null,
+        meta.hg || null,
         meta.st !== null && meta.st !== undefined ? String(meta.st) : null,
-        rawFilePath,
-        meta.details,
+        rawFilePath || null,
+        meta.details || null,
         meta.prevDt || null,
         meta.prevHt || null,
         meta.dt || null,
-        meta.ht || null
+        meta.ht || null,
+        meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
+        callTimeIso,
+        callTimeUnix,
+        latencyMs
       );
 
       const regLine = [
@@ -2382,7 +2416,7 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
 
   totalChecksCount++;
   recentLogs.unshift({
-    time: now.toLocaleTimeString(),
+    time: new Date(callTimeUnix).toLocaleTimeString(),
     timestampIso,
     serverKey,
     role,
@@ -2401,11 +2435,12 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
 /**
  * COMPARAÇÃO DUPLA DE MONOTONICIDADE (DG/HG e IDG INDEPENDENTES)
  */
-function processVersion(serverKey, relPath, payload, rawText, source, headers = {}) {
+function processVersion(serverKey, relPath, payload, rawText, source, headers = {}, timing = {}) {
   const filename = getFilename(relPath);
-  const now = new Date();
-  const timestampIso = now.toISOString();
-  const localTime = now.toLocaleTimeString();
+  const callTimeUnix = timing.callTimeUnix || Date.now();
+  const callTimeIso = timing.callTimeIso || new Date(callTimeUnix).toISOString();
+  const latencyMs = timing.latencyMs !== undefined ? timing.latencyMs : null;
+  const localTime = new Date(callTimeUnix).toLocaleTimeString();
 
   const idg = payload.idg ? String(payload.idg) : null;
   const idgNum = idg ? Number(idg) : null;
@@ -2435,6 +2470,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   const lastModifiedHeader = headers['last-modified'] || headers['Last-Modified'] || null;
   const serverHeader = headers['server'] || (serverKey === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
   const serverIp = headers['x-server-ip'] || null;
+  const akamaiGrn = headers['akamai-grn'] || headers['x-akamai-grn'] || headers['x-akamai-request-id'] || headers['akamai-request-id'] || null;
 
   const currentMeta = {
     cacheControl,
@@ -2445,7 +2481,12 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     lastModifiedHeader,
     serverHeader,
     serverIp,
-    timestampIso,
+    akamaiGrn,
+    timestampIso: callTimeIso,
+    timestampUnix: callTimeUnix,
+    callTimeIso,
+    callTimeUnix,
+    latencyMs,
     serverKey,
     relPath,
     filename,
@@ -2477,12 +2518,28 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     return;
   }
 
-  const isSameGenTime = genTime !== null && prev.genTime !== null && genTime === prev.genTime;
-  const isSameTotTime = totTime === prev.totTime;
-  const isSameSt = st === prev.st;
-  const isSameIdg = idg && prev.idg && idg === prev.idg;
+  // Gating 1: Respostas que devem ignorar teste de regressão (ex: cache interno de navegador)
+  if (timing.skipRegression) {
+    recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'CACHE_NAVEGADOR');
+    return;
+  }
 
-  if (isSameGenTime && isSameTotTime && isSameSt && isSameIdg) {
+  // Gating 2 (DUPLA CHECAGEM): Resposta fora de ordem cronológica de disparo
+  // Se esta requisição foi disparada ANTERIORMENTE ao disparo que originou o estado atual (prev),
+  // a resposta chegou com atraso de trânsito. NUNCA pode ser avaliada como regressão!
+  if (prev.callTimeUnix && callTimeUnix < prev.callTimeUnix) {
+    currentMeta.status = 'RESPOSTA_FORA_DE_ORDEM';
+    currentMeta.details = `Chegada fora de ordem: chamada em ${callTimeIso} anterior à leitura atual (${prev.callTimeIso})`;
+    recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'FORA_DE_ORDEM');
+    return;
+  }
+
+  const isSameGen = Boolean(dg && prev.dg && hg && prev.hg && dg === prev.dg && hg === prev.hg);
+  const isSameTot = Boolean((!dt && !prev.dt && !ht && !prev.ht) || (dt && prev.dt && ht && prev.ht && dt === prev.dt && ht === prev.ht));
+  const isSameSt = Boolean((st === null && prev.st === null) || (st !== null && prev.st !== null && st === prev.st));
+  const isSameIdg = Boolean((!idg && !prev.idg) || (idg && prev.idg && idg === prev.idg));
+
+  if (isSameGen && isSameTot && isSameSt && isSameIdg) {
     // Atualiza metadados dinâmicos de cache (ex: TTL/max-age decrescente do SIM) mesmo sem nova versão
     prev.cacheControl = currentMeta.cacheControl;
     prev.maxAge = currentMeta.maxAge;
@@ -2492,6 +2549,10 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     prev.lastModifiedHeader = currentMeta.lastModifiedHeader;
     prev.serverHeader = currentMeta.serverHeader;
     if (currentMeta.serverIp) prev.serverIp = currentMeta.serverIp;
+    if (currentMeta.akamaiGrn) prev.akamaiGrn = currentMeta.akamaiGrn;
+    prev.callTimeUnix = currentMeta.callTimeUnix;
+    prev.callTimeIso = currentMeta.callTimeIso;
+    prev.latencyMs = currentMeta.latencyMs;
     return;
   }
 
@@ -2502,15 +2563,16 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   const reasons = [];
 
   // Critério 1: Monotonicidade Temporal de Geração (DG/HG)
-  if (genTime !== null && prev.genTime !== null && genTime < prev.genTime) {
+  // Se dg e hg forem idênticos em texto, por definição matemática NÃO HÁ REGRESSÃO TEMPORAL
+  if (!isSameGen && genTime !== null && prev.genTime !== null && genTime < prev.genTime) {
     isTimeRegression = true;
     const diffSec = Math.round((prev.genTime - genTime) / 1000);
     reasons.push(`REGRESSÃO TEMPORAL (DG/HG): retrocedeu de ${prev.dg} ${prev.hg} para ${dg} ${hg} (-${diffSec}s)`);
   }
 
   // Critério 2: Monotonicidade Temporal de Totalização (DT/HT)
-  // A data e hora de apuração/fechamento dos votos nunca pode retroceder
-  if (totTime !== null && prev.totTime !== null && totTime < prev.totTime) {
+  // Se dt e ht forem idênticos em texto, por definição matemática NÃO HÁ REGRESSÃO DE TOTALIZAÇÃO
+  if (!isSameTot && totTime !== null && prev.totTime !== null && totTime < prev.totTime) {
     isTotTimeRegression = true;
     const diffTotSec = Math.round((prev.totTime - totTime) / 1000);
     reasons.push(`REGRESSÃO DE TOTALIZAÇÃO (DT/HT): retrocedeu de ${prev.dt} ${prev.ht} para ${dt} ${ht} (-${diffTotSec}s)`);
@@ -2518,14 +2580,14 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
   // Critério 3: Monotonicidade de Seções Totalizadas (ST)
   // A quantidade acumulada de seções apuradas nunca pode diminuir no mesmo arquivo
-  if (st !== null && prev.st !== null && st < prev.st) {
+  if (!isSameSt && st !== null && prev.st !== null && st < prev.st) {
     isStRegression = true;
     const diffSt = prev.st - st;
     reasons.push(`REGRESSÃO DE SEÇÕES APURADAS (ST): retrocedeu de ${prev.st} para ${st} seções (-${diffSt})`);
   }
 
   // Critério 4: Monotonicidade Sequencial (IDG) - Apenas rastreio/anomalia (não bloqueante no Oracle RAC)
-  if (idgNum !== null && prev.idgNum !== null && idgNum < prev.idgNum) {
+  if (!isSameIdg && idgNum !== null && prev.idgNum !== null && idgNum < prev.idgNum) {
     isIdgRegression = true;
     const diffIdg = prev.idgNum - idgNum;
     reasons.push(`ANOMALIA SEQUENCIAL (IDG): retrocedeu de ${prev.idg} para ${idg} (-${diffIdg})`);
@@ -2691,11 +2753,22 @@ function logComparisonRow(relPath) {
 
 function httpRequestWithIp(urlStr) {
   return new Promise((resolve) => {
+    let resolved = false;
+    const finish = (result) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(result);
+      }
+    };
+
     try {
       const u = new URL(urlStr);
       const lib = u.protocol === 'https:' ? https : http;
+      const callTimeUnix = Date.now();
+      const callTimeIso = new Date(callTimeUnix).toISOString();
       const req = lib.request(u, {
         method: 'GET',
+        timeout: 5000,
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
@@ -2706,38 +2779,70 @@ function httpRequestWithIp(urlStr) {
         const chunks = [];
         res.on('data', chunk => chunks.push(chunk));
         res.on('end', () => {
+          const latencyMs = Date.now() - callTimeUnix;
           const text = Buffer.concat(chunks).toString('utf8');
           const headersObj = {};
           for (const [k, v] of Object.entries(res.headers)) {
             headersObj[k.toLowerCase()] = v;
           }
           if (serverIp) headersObj['x-server-ip'] = serverIp;
-          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, statusCode: res.statusCode, text, headers: headersObj, serverIp });
+          finish({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            statusCode: res.statusCode,
+            text,
+            headers: headersObj,
+            serverIp,
+            callTimeUnix,
+            callTimeIso,
+            latencyMs
+          });
         });
       });
-      req.on('error', (e) => resolve({ ok: false, error: e.message, headers: {} }));
+      req.on('timeout', () => {
+        req.destroy(new Error('ETIMEDOUT'));
+      });
+      req.on('error', (e) => finish({
+        ok: false,
+        error: e.message,
+        headers: {},
+        callTimeUnix,
+        callTimeIso,
+        latencyMs: Date.now() - callTimeUnix
+      }));
       req.end();
     } catch (err) {
-      resolve({ ok: false, error: err.message, headers: {} });
+      finish({ ok: false, error: err.message, headers: {} });
     }
   });
 }
 
+const inFlightPollFiles = new Set();
+
 async function pollFile(relPath) {
-  const cacheBust = `?nocache=${Date.now()}`;
-  const activeServers = getActiveServers();
+  if (inFlightPollFiles.has(relPath)) return;
+  inFlightPollFiles.add(relPath);
+  try {
+    const cacheBust = `?nocache=${Date.now()}`;
+    const activeServers = getActiveServers();
 
-  for (const srv of activeServers) {
-    const fullUrl = srv.baseUrl + relPath + cacheBust;
-    try {
-      const resp = await httpRequestWithIp(fullUrl);
-      if (!resp.ok || !resp.text) continue;
+    for (const srv of activeServers) {
+      const fullUrl = srv.baseUrl + relPath + cacheBust;
+      try {
+        const resp = await httpRequestWithIp(fullUrl);
+        if (!resp.ok || !resp.text) continue;
 
-      const payload = decodeJwsOrJson(resp.text);
-      if (!payload) continue;
+        const payload = decodeJwsOrJson(resp.text);
+        if (!payload) continue;
 
-      processVersion(srv.chave, relPath, payload, resp.text, 'Polling_Ativo', resp.headers);
-    } catch {}
+        processVersion(srv.chave, relPath, payload, resp.text, 'Polling_Ativo', resp.headers, {
+          callTimeUnix: resp.callTimeUnix,
+          callTimeIso: resp.callTimeIso,
+          latencyMs: resp.latencyMs
+        });
+      } catch {}
+    }
+  } finally {
+    inFlightPollFiles.delete(relPath);
   }
 }
 
@@ -2747,7 +2852,9 @@ async function runWorkerPool(filesArray, concurrency = 15) {
     while (queue.length > 0) {
       const relPath = queue.shift();
       if (relPath) {
-        await pollFile(relPath);
+        try {
+          await pollFile(relPath);
+        } catch {}
       }
     }
   });
@@ -2800,7 +2907,18 @@ async function attachTabObserver(tab) {
             const bodyCmdId = reqCounter++;
             const headersWithIp = { ...(resp.headers || {}) };
             if (resp.remoteIPAddress) headersWithIp['x-server-ip'] = resp.remoteIPAddress;
-            pendingRequests.set(bodyCmdId, { serverKey, relPath, headers: headersWithIp });
+            const isFromCache = Boolean(resp.fromDiskCache || resp.fromPrefetchCache || resp.fromServiceWorker);
+            const callTimeUnix = Date.now();
+            const callTimeIso = new Date(callTimeUnix).toISOString();
+
+            pendingRequests.set(bodyCmdId, {
+              serverKey,
+              relPath,
+              headers: headersWithIp,
+              isFromCache,
+              callTimeUnix,
+              callTimeIso
+            });
 
             ws.send(JSON.stringify({
               id: bodyCmdId,
@@ -2820,7 +2938,19 @@ async function attachTabObserver(tab) {
 
           const payload = decodeJwsOrJson(bodyText);
           if (payload) {
-            processVersion(reqInfo.serverKey, reqInfo.relPath, payload, bodyText, `Browser_CDP`, reqInfo.headers);
+            processVersion(
+              reqInfo.serverKey,
+              reqInfo.relPath,
+              payload,
+              bodyText,
+              reqInfo.isFromCache ? 'Browser_CDP_Cache' : 'Browser_CDP',
+              reqInfo.headers,
+              {
+                callTimeUnix: reqInfo.callTimeUnix,
+                callTimeIso: reqInfo.callTimeIso,
+                skipRegression: reqInfo.isFromCache
+              }
+            );
           }
         }
       }
@@ -4875,6 +5005,9 @@ function setElText(id, val) {
       document.getElementById('mSimLm').innerText = sim.lastModifiedHeader || '-';
       document.getElementById('mSimIp').innerText = sim.serverIp || 'Aguardando coleta...';
       document.getElementById('mSimServer').innerText = sim.serverHeader || 'Akamai CDN';
+      if (document.getElementById('mSimGrn')) {
+        document.getElementById('mSimGrn').innerText = sim.akamaiGrn || '-';
+      }
 
       // Análise automática
       let analysis = '';
@@ -4975,16 +5108,21 @@ function setElText(id, val) {
 
     async function buscarRegressoesRemoto() {
       const searchInput = document.getElementById('regSearchInput');
+      const grnInput = document.getElementById('regFilterGrn');
       const q = (searchInput ? searchInput.value : '').replace(/^#/, '').trim();
-      if (!q) return;
+      const grn = (grnInput ? grnInput.value : '').trim();
+      if (!q && !grn) return;
       const container = document.getElementById('regressoesListContainer');
       container.innerHTML = '<div style="text-align:center; padding:40px; color:#94a3b8; font-size:0.9rem;">⏳ Buscando no histórico completo do banco SQLite...</div>';
       try {
-        const res = await fetch('/api/regressoes?q=' + encodeURIComponent(q) + '&limit=100');
+        let fetchUrl = '/api/regressoes?limit=100';
+        if (q) fetchUrl += '&q=' + encodeURIComponent(q);
+        if (grn) fetchUrl += '&grn=' + encodeURIComponent(grn);
+        const res = await fetch(fetchUrl);
         const data = await res.json();
         if (data.regressoes && data.regressoes.length > 0) {
           allRegressoesData = data.regressoes;
-          document.getElementById('regModalRodadaNome').textContent = 'Busca Histórica: ' + q;
+          document.getElementById('regModalRodadaNome').textContent = 'Busca Histórica: ' + (q || grn);
           document.getElementById('regModalTotalCount').textContent = data.regressoes.length;
           renderFilteredRegressoes(true);
         } else {
@@ -5002,6 +5140,7 @@ function setElText(id, val) {
       const server = document.getElementById('regFilterServer') ? document.getElementById('regFilterServer').value : '';
       const ufFilter = document.getElementById('regFilterUf') ? document.getElementById('regFilterUf').value.toLowerCase() : '';
       const criterion = document.getElementById('regFilterCriterion') ? document.getElementById('regFilterCriterion').value : '';
+      const grnFilter = (document.getElementById('regFilterGrn') ? document.getElementById('regFilterGrn').value : '').toLowerCase().trim();
 
       const cleanSearch = search.replace(/^#/, '');
 
@@ -5016,6 +5155,14 @@ function setElText(id, val) {
           const m = (r.motivo || '').toUpperCase();
           if (!c.includes(criterion) && !m.includes(criterion)) return false;
         }
+        if (grnFilter) {
+          const rGrn = (r.akamai_grn || '').toLowerCase();
+          const rRawGrn = (r.rawMeta && r.rawMeta.headers && (r.rawMeta.headers['akamai-grn'] || r.rawMeta.headers['x-akamai-grn']) ? String(r.rawMeta.headers['akamai-grn'] || r.rawMeta.headers['x-akamai-grn']) : '').toLowerCase();
+          const matchTimelineGrn = (r.timeline || []).some(function(step) {
+            return step.akamai_grn && String(step.akamai_grn).toLowerCase().includes(grnFilter);
+          });
+          if (!rGrn.includes(grnFilter) && !rRawGrn.includes(grnFilter) && !matchTimelineGrn) return false;
+        }
         if (cleanSearch) {
           const matchId = String(r.id || '') === cleanSearch || String(r.id || '').includes(cleanSearch);
           const matchIdg = String(r.idg_recebido || '').includes(cleanSearch) || String(r.idg_anterior || '').includes(cleanSearch);
@@ -5025,13 +5172,17 @@ function setElText(id, val) {
           const matchUf = (r.fileMeta && r.fileMeta.uf ? r.fileMeta.uf : '').toLowerCase().includes(cleanSearch);
           const matchCargo = (r.fileMeta && r.fileMeta.cargo ? r.fileMeta.cargo : '').toLowerCase().includes(cleanSearch);
           const matchIp = (r.rawMeta && r.rawMeta.headers && r.rawMeta.headers['x-server-ip'] ? r.rawMeta.headers['x-server-ip'] : (r.rawMeta && r.rawMeta.serverIp ? r.rawMeta.serverIp : '')).toLowerCase().includes(cleanSearch);
-          if (!matchId && !matchIdg && !matchFile && !matchMotivo && !matchServer && !matchUf && !matchCargo && !matchIp) return false;
+          const matchGrn = (r.akamai_grn || '').toLowerCase().includes(cleanSearch) || (r.rawMeta && r.rawMeta.headers && String(r.rawMeta.headers['akamai-grn'] || '').toLowerCase().includes(cleanSearch));
+          const matchTimelineGrn = (r.timeline || []).some(function(step) {
+            return step.akamai_grn && String(step.akamai_grn).toLowerCase().includes(cleanSearch);
+          });
+          if (!matchId && !matchIdg && !matchFile && !matchMotivo && !matchServer && !matchUf && !matchCargo && !matchIp && !matchGrn && !matchTimelineGrn) return false;
         }
         return true;
       });
 
       const countEl = document.getElementById('regShowingCount');
-      const isFiltered = Boolean(search || server || ufFilter || criterion);
+      const isFiltered = Boolean(search || server || ufFilter || criterion || grnFilter);
       const limitToShow = isFiltered ? Math.max(regModalPageSize, filtered.length) : regModalPageSize;
       const displayItems = filtered.slice(0, limitToShow);
 
@@ -5205,7 +5356,10 @@ function setElText(id, val) {
 
           for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
             const step = timelineList[tIdx];
-            const stepTime = new Date(step.timestamp_iso).toLocaleTimeString('pt-BR');
+            const stepTime = new Date(step.call_time_iso || step.timestamp_iso).toLocaleTimeString('pt-BR');
+            const latencyBadge = (step.latency_ms !== null && step.latency_ms !== undefined) 
+              ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
+              : '';
             const isReg = step.isRegressionPoint;
             const isOrigin = step.servidor === 'HMG';
             
@@ -5241,7 +5395,8 @@ function setElText(id, val) {
             timelineHtml += '<div style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
               '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">' +
                 '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
-                  '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;">• ' + stepTime + '</strong>' +
+                  '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;" title="Instante de envio da requisição (Disparo)">• ' + stepTime + '</strong>' +
+                  latencyBadge +
                   '<span class="' + badgeServidor + '" style="font-size:0.70rem; padding:1px 6px; border-radius:3px;">' + step.servidor + '</span>' +
                   chipDgHg +
                   (chipIdg ? chipIdg : '') +
@@ -5252,10 +5407,12 @@ function setElText(id, val) {
               '</div>' +
 
               '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:#94a3b8; font-family:monospace; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px; margin-top:4px;">' +
+                '<span>⏱️ Chamada: <strong style="color:#e2e8f0;">' + ((step.call_time_iso ? step.call_time_iso.slice(11, 19) : stepTime)) + '</strong></span>' +
                 '<span>🌐 IP Borda: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
                 '<span>⚡ Cache-Control: <strong style="color:#f8fafc;">' + (step.cache_control || '-') + '</strong></span>' +
                 '<span>📦 CDN Cache: <strong style="color:#34d399;">' + (step.cdn_status || '-') + '</strong></span>' +
                 '<span>🏷️ ETag: <span style="color:#cbd5e1;">' + (step.etag || '-') + '</span></span>' +
+                (step.akamai_grn && step.akamai_grn !== '-' ? '<span>🆔 GRN: <strong style="color:#c084fc;" title="Akamai Global Request Number">' + escapeHtml(step.akamai_grn) + '</strong></span>' : '') +
                 (step.age && step.age !== '-' ? '<span>⏳ Age: ' + step.age + '</span>' : '') +
               '</div>' +
             '</div>';
@@ -5264,6 +5421,9 @@ function setElText(id, val) {
           timelineHtml += '</div></div>';
         }
 
+        const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+        const caseGrnBadge = caseGrn ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:2px 8px; border-radius:4px;" title="Akamai Global Request Number (GRN)">🆔 GRN: ' + escapeHtml(caseGrn) + '</span> ') : '';
+
         html += '<div style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25);">' +
           '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' +
             '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
@@ -5271,6 +5431,7 @@ function setElText(id, val) {
               '<span style="font-size:0.80rem; color:#94a3b8; font-family:monospace;">⏱️ ' + timeStr + ' (' + elapsedText + ')</span>' +
               '<span class="' + serverBadgeClass + '" style="font-size:0.75rem; padding:2px 8px; border-radius:4px;">' + r.servidor + ' (' + serverRoleDesc + ')</span>' +
               critBadgesHtml +
+              caseGrnBadge +
             '</div>' +
             '<div style="display:flex; align-items:center; gap:6px;">' +
               '<a href="/api/evidencia?id=' + r.id + '" target="_blank" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Ver payload JSON raw">🔍 Ver JSON</a>' +
@@ -5364,8 +5525,12 @@ function setElText(id, val) {
             '<table style="width:100%; border-collapse:collapse; font-size:0.75rem; background:#1e293b; border-radius:6px; overflow:hidden;">' +
               '<tbody>' +
                 '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px; width:180px;">Instância / IP de Borda (x-server-ip)</td>' +
+                  '<td style="color:#94a3b8; padding:5px 10px; width:220px;">Instância / IP de Borda (x-server-ip)</td>' +
                   '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 10px;">' + serverIp + '</td>' +
+                '</tr>' +
+                '<tr style="border-bottom:1px solid #334155;">' +
+                  '<td style="color:#94a3b8; padding:5px 10px;">Akamai-GRN (Global Request Number)</td>' +
+                  '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 10px; word-break:break-all;">' + (caseGrn || '-') + '</td>' +
                 '</tr>' +
                 '<tr style="border-bottom:1px solid #334155;">' +
                   '<td style="color:#94a3b8; padding:5px 10px;">CDN Cache Status</td>' +
@@ -5597,6 +5762,15 @@ function setElText(id, val) {
                 <div class="hint-desc">Rede de entrega</div>
               </td>
               <td id="mSimServer" class="code" style="color:#94a3b8; padding:6px 0; vertical-align:top;">Akamai CDN</td>
+            </tr>
+            <tr>
+              <td style="color:#94a3b8; padding:6px 0; vertical-align:top;">
+                <span class="header-hint" title="Global Request Number da Akamai para rastreamento forense de requisições de borda.">
+                  Akamai-GRN <span class="hint-icon">?</span>
+                </span>
+                <div class="hint-desc">Rastreio CDN / Borda</div>
+              </td>
+              <td id="mSimGrn" class="code" style="color:#c084fc; font-family:monospace; padding:6px 0; vertical-align:top; word-break:break-all;">-</td>
             </tr>
           </table>
         </div>
@@ -5888,8 +6062,12 @@ function setElText(id, val) {
       <!-- Barra de Filtros Internos da Modal -->
       <div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
         <div style="flex:1; min-width:260px; display:flex; gap:6px;">
-          <input type="text" id="regSearchInput" placeholder="🔍 Buscar por ID (#26374), arquivo, UF, cargo, IP ou motivo..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="flex:1; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 12px; border-radius:6px; font-size:0.82rem; outline:none;" />
+          <input type="text" id="regSearchInput" placeholder="🔍 Buscar por ID (#26374), arquivo, UF, cargo, IP, GRN ou motivo..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="flex:1; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 12px; border-radius:6px; font-size:0.82rem; outline:none;" />
           <button onclick="buscarRegressoesRemoto()" class="btn-copy" style="padding:6px 12px; font-size:0.80rem; background:#2563eb; color:#fff; border-radius:6px; white-space:nowrap; cursor:pointer;" title="Buscar no histórico do SQLite">🔍 Buscar</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">GRN:</label>
+          <input type="text" id="regFilterGrn" placeholder="Filtrar por Akamai-GRN..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 10px; border-radius:6px; font-size:0.80rem; width:160px; outline:none;" />
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Servidor:</label>
@@ -6769,6 +6947,7 @@ function getRawMetadataFast(filePath) {
         const limitParam = url.searchParams.get('limit');
         const limit = limitParam !== null ? parseInt(limitParam, 10) : 2000;
         const q = (url.searchParams.get('q') || '').trim();
+        const grnFilter = (url.searchParams.get('grn') || '').trim();
         const serverFilter = (url.searchParams.get('servidor') || '').trim();
         const criterionFilter = (url.searchParams.get('criterio') || '').trim();
 
@@ -6779,15 +6958,20 @@ function getRawMetadataFast(filePath) {
           const cleanQ = q.replace(/^#/, '');
           const qNum = parseInt(cleanQ, 10);
           if (!isNaN(qNum) && String(qNum) === cleanQ) {
-            sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ?) ';
-            params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+            sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ?) ';
+            params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
           } else {
-            sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ?) ';
-            params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+            sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ?) ';
+            params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
           }
-        } else {
+        } else if (!grnFilter) {
           sql += 'AND timestamp_iso >= ? ';
           params.push(rodadaStartIso);
+        }
+
+        if (grnFilter) {
+          sql += 'AND (akamai_grn LIKE ? OR headers_json LIKE ?) ';
+          params.push(`%${grnFilter}%`, `%${grnFilter}%`);
         }
 
         if (serverFilter) {
@@ -6810,7 +6994,8 @@ function getRawMetadataFast(filePath) {
         const stmtTimelineRange = db.prepare(`
           SELECT 
             id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, headers_json, evidencia_raw_path
+            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, evidencia_raw_path,
+            call_time_iso, call_time_unix, latency_ms
           FROM leituras
           WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
           ORDER BY timestamp_unix ASC
@@ -6818,7 +7003,8 @@ function getRawMetadataFast(filePath) {
         const stmtTimelineFallback = db.prepare(`
           SELECT 
             id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, headers_json, evidencia_raw_path
+            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, evidencia_raw_path,
+            call_time_iso, call_time_unix, latency_ms
           FROM leituras
           WHERE arquivo = ? AND timestamp_unix <= ?
           ORDER BY timestamp_unix DESC
@@ -6827,6 +7013,8 @@ function getRawMetadataFast(filePath) {
 
         const items = rows.map(r => {
           const rawMeta = getRawMetadataFast(r.evidencia_raw_path);
+          const rawHeaders = (rawMeta && rawMeta.headers) || {};
+          const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
 
           const regUnix = new Date(r.timestamp_iso).getTime();
           // Busca histórico cronológico de leituras em torno da regressão (15 min antes e 2 min depois)
@@ -6845,6 +7033,7 @@ function getRawMetadataFast(filePath) {
             const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
             const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
             const tCdnStatus = t.cdn_status || tHeaders['cdn-cache-status'] || tHeaders['x-cache'] || (t.servidor === 'HMG' ? 'ORIGIN' : '-');
+            const tAkamaiGrn = t.akamai_grn || tHeaders['akamai-grn'] || tHeaders['x-akamai-grn'] || (t.id === r.id ? itemAkamaiGrn : null) || '-';
             const tEtag = t.etag || tHeaders['etag'] || '-';
             const tExpires = tHeaders['expires'] || '-';
             const tAge = tHeaders['age'] !== undefined ? tHeaders['age'] + 's' : '-';
@@ -6854,6 +7043,9 @@ function getRawMetadataFast(filePath) {
               id: t.id,
               timestamp_iso: t.timestamp_iso,
               timestamp_unix: t.timestamp_unix,
+              call_time_iso: t.call_time_iso || t.timestamp_iso,
+              call_time_unix: t.call_time_unix || t.timestamp_unix,
+              latency_ms: t.latency_ms !== undefined ? t.latency_ms : null,
               servidor: t.servidor,
               papel_servidor: t.papel_servidor,
               dg: t.dg,
@@ -6866,6 +7058,7 @@ function getRawMetadataFast(filePath) {
               server_ip: tServerIp,
               cache_control: tCacheControl,
               cdn_status: tCdnStatus,
+              akamai_grn: tAkamaiGrn,
               etag: tEtag,
               expires: tExpires,
               age: tAge,
@@ -6875,6 +7068,7 @@ function getRawMetadataFast(filePath) {
 
           return {
             ...r,
+            akamai_grn: itemAkamaiGrn,
             fileMeta: parseFileMetadata(r.arquivo),
             rawMeta,
             timeline: enrichedTimeline
@@ -6993,10 +7187,19 @@ async function start() {
   const allList = Array.from(trackedFiles);
   await runWorkerPool(allList, 15);
 
-  // Loop de varredura cíclica contínua
+  // Loop de varredura cíclica contínua protegido contra sobreposição de ciclos
+  let isPollingCycleRunning = false;
   setInterval(async () => {
-    const list = Array.from(trackedFiles);
-    await runWorkerPool(list, 15);
+    if (isPollingCycleRunning) return;
+    isPollingCycleRunning = true;
+    try {
+      const list = Array.from(trackedFiles);
+      await runWorkerPool(list, 15);
+    } catch (err) {
+      console.error('[POLL] Erro no ciclo de polling:', err);
+    } finally {
+      isPollingCycleRunning = false;
+    }
   }, 6000);
 
   setInterval(syncTabs, 10000);
