@@ -368,8 +368,13 @@
           <option value="SEQUENCIAL">IDG (Sequencial)</option>
         </select>
       </div>
-      <div id="dossieRegShowingCount" style="font-size:0.78rem; color:#64748b; margin-left:auto;">
-        Exibindo 0 de 0
+      <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+        <button id="btnToggleAllDossieRegs" type="button" onclick="toggleAllDossieRegCards()" class="btn-copy" style="padding:5px 12px; font-size:0.78rem; background:#1e293b; border:1px solid #475569; color:#cbd5e1; display:flex; align-items:center; gap:6px; cursor:pointer;" title="Expandir ou colapsar todas as ocorrências">
+          <span id="toggleAllDossieRegsIcon">↕️</span> <span id="toggleAllDossieRegsText">Expandir Todos</span>
+        </button>
+        <div id="dossieRegShowingCount" style="font-size:0.78rem; color:#64748b;">
+          Exibindo 0 de 0
+        </div>
       </div>
     </div>
 
@@ -1186,6 +1191,57 @@
     }
 
     let selectedDossieRegressionId = null;
+    const expandedDossieCardIds = new Set();
+
+    function toggleDossieCard(id, event) {
+      if (event) event.stopPropagation();
+      if (expandedDossieCardIds.has(id)) {
+        expandedDossieCardIds.delete(id);
+      } else {
+        expandedDossieCardIds.add(id);
+      }
+      updateDossieCardCollapsedState(id);
+      updateToggleAllDossieBtn();
+    }
+
+    function toggleAllDossieRegCards() {
+      const allVisibleIds = Array.from(document.querySelectorAll('#dossieRegsListContainer .regression-card')).map(function(el) {
+        return parseInt(el.getAttribute('data-regression-id'), 10);
+      }).filter(Boolean);
+      const allExpanded = allVisibleIds.length > 0 && allVisibleIds.every(function(id) { return expandedDossieCardIds.has(id); });
+      if (allExpanded) {
+        expandedDossieCardIds.clear();
+      } else {
+        allVisibleIds.forEach(function(id) { expandedDossieCardIds.add(id); });
+      }
+      allVisibleIds.forEach(function(id) { updateDossieCardCollapsedState(id); });
+      updateToggleAllDossieBtn();
+    }
+
+    function updateDossieCardCollapsedState(id) {
+      const bodyEl = document.getElementById('dossieCardBody_' + id);
+      const chevronEl = document.getElementById('dossieChevron_' + id);
+      const btnTextEl = document.getElementById('dossieBtnText_' + id);
+      const cardEl = document.getElementById('dossieCard_' + id);
+      const isExp = expandedDossieCardIds.has(id);
+
+      if (bodyEl) bodyEl.style.display = isExp ? 'block' : 'none';
+      if (chevronEl) chevronEl.textContent = isExp ? '▼' : '▶';
+      if (btnTextEl) btnTextEl.textContent = isExp ? 'Recolher' : 'Detalhes';
+      if (cardEl) {
+        cardEl.style.padding = isExp ? '14px' : '9px 14px';
+      }
+    }
+
+    function updateToggleAllDossieBtn() {
+      const text = document.getElementById('toggleAllDossieRegsText');
+      if (!text) return;
+      const allVisibleIds = Array.from(document.querySelectorAll('#dossieRegsListContainer .regression-card')).map(function(el) {
+        return parseInt(el.getAttribute('data-regression-id'), 10);
+      }).filter(Boolean);
+      const allExpanded = allVisibleIds.length > 0 && allVisibleIds.every(function(id) { return expandedDossieCardIds.has(id); });
+      text.textContent = allExpanded ? 'Colapsar Todos' : 'Expandir Todos';
+    }
 
     function renderRegsTable(rows) {
       const container = document.getElementById('dossieRegsListContainer');
@@ -1425,9 +1481,15 @@
           '</span>'
         ) : (r.idg_recebido || '-');
 
-        html += '<div id="dossieCard_' + r.id + '" class="regression-card" onclick="selectDossieRegression(' + r.id + ')" style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25); cursor:pointer; transition:all 0.15s ease;">' +
-          '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' +
+        const isExpanded = expandedDossieCardIds.has(r.id);
+
+        html += '<div id="dossieCard_' + r.id + '" class="regression-card" data-regression-id="' + r.id + '" onclick="selectDossieRegression(' + r.id + ')" style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:' + (isExpanded ? '14px' : '9px 14px') + '; box-shadow:0 4px 12px rgba(0,0,0,0.25); cursor:pointer; transition:all 0.15s ease;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">' +
             '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+              '<button type="button" onclick="toggleDossieCard(' + r.id + ', event)" class="btn-copy" style="padding:2px 8px; font-size:0.75rem; background:#1e293b; border:1px solid #475569; color:#38bdf8; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Expandir/Recolher ocorrência">' +
+                '<span id="dossieChevron_' + r.id + '">' + (isExpanded ? '▼' : '▶') + '</span>' +
+                '<span id="dossieBtnText_' + r.id + '" style="font-size:0.70rem; font-weight:700;">' + (isExpanded ? 'Recolher' : 'Detalhes') + '</span>' +
+              '</button>' +
               '<span style="font-family:monospace; font-weight:700; font-size:0.82rem; background:rgba(239,68,68,0.2); color:#fca5a5; padding:2px 8px; border-radius:4px; border:1px solid rgba(239,68,68,0.4);">#' + r.id + '</span>' +
               '<span style="font-size:0.80rem; color:#94a3b8; font-family:monospace;">⏱️ ' + timeStr + ' (' + elapsedText + ')</span>' +
               '<span class="' + serverBadgeClass + '" style="font-size:0.75rem; padding:2px 8px; border-radius:4px;">' + r.servidor + ' (' + serverRoleDesc + ')</span>' +
@@ -1443,57 +1505,67 @@
             '</div>' +
           '</div>' +
 
-          '<div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; font-size:0.82rem;">' +
-            '<span style="color:#38bdf8; font-weight:700; font-family:monospace; word-break:break-all;">' + r.arquivo + '</span>' +
-            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">UF: <strong>' + uf + '</strong></span>' +
-            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Cargo: <strong>' + cargo + '</strong></span>' +
-            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Tipo: <strong>' + tipo + '</strong></span>' +
-            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Eleição: <strong>' + eleicao + '</strong></span>' +
-          '</div>' +
-
-          timelineHtml +
-
-          '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:8px; font-size:0.80rem;">' +
-            '<div>' +
-              '<div style="font-size:0.72rem; text-transform:uppercase; color:#10b981; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
-                '<span>✓</span> Versão Anterior Mais Recente:' +
-              '</div>' +
-              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
-                '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
-                '<div>' + prevDgHgHtml + '</div>' +
-                '<span style="color:#94a3b8;">Totalização:</span>' +
-                '<span style="color:#f8fafc;">' + prevTotStr + '</span>' +
-                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
-                '<span style="color:#f8fafc;">' + prevStStr + '</span>' +
-                '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
-                '<div>' + prevIdgHtml + '</div>' +
-              '</div>' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; font-size:0.80rem;">' +
+            '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+              '<span style="color:#38bdf8; font-weight:700; font-family:monospace; word-break:break-all;">' + r.arquivo + '</span>' +
+              '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">UF: <strong>' + uf + '</strong></span>' +
+              '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Cargo: <strong>' + cargo + '</strong></span>' +
+              '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Eleição: <strong>' + eleicao + '</strong></span>' +
             '</div>' +
-
-            '<div>' +
-              '<div style="font-size:0.72rem; text-transform:uppercase; color:#ef4444; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
-                '<span>🚨</span> Versão Recebida (Retrocesso):' +
-              '</div>' +
-              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
-                '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
-                '<div>' + currDgHgHtml + '</div>' +
-                '<span style="color:#94a3b8;">Totalização:</span>' +
-                '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
-                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
-                '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
-                '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
-                '<div>' + currIdgHtml + '</div>' +
-              '</div>' +
+            '<div style="display:flex; align-items:center; gap:6px; font-family:monospace; font-size:0.74rem;">' +
+              '<span style="color:#94a3b8;">DG/HG:</span> ' +
+              '<span style="color:#10b981;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</span>' +
+              '<span style="color:#ef4444; font-weight:bold;">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
+              (r.idg_anterior ? ('<span style="color:#94a3b8; margin-left:4px;">(IDG: ' + r.idg_anterior + ' ➔ <strong style="color:#fca5a5;">' + (r.idg_recebido || '-') + '</strong>)</span>') : '') +
             '</div>' +
           '</div>' +
 
-          '<div style="font-size:0.78rem; color:#fca5a5; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px;">' +
-            '<strong>⚠️ Diagnóstico:</strong> ' + motivoTexto +
+          '<div id="dossieCardBody_' + r.id + '" class="card-collapsible-body" style="display:' + (isExpanded ? 'block' : 'none') + '; margin-top:10px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:10px;">' +
+            timelineHtml +
+
+            '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:8px; font-size:0.80rem;">' +
+              '<div>' +
+                '<div style="font-size:0.72rem; text-transform:uppercase; color:#10b981; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+                  '<span>✓</span> Versão Anterior Mais Recente:' +
+                '</div>' +
+                '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+                  '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
+                  '<div>' + prevDgHgHtml + '</div>' +
+                  '<span style="color:#94a3b8;">Totalização:</span>' +
+                  '<span style="color:#f8fafc;">' + prevTotStr + '</span>' +
+                  '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
+                  '<span style="color:#f8fafc;">' + prevStStr + '</span>' +
+                  '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
+                  '<div>' + prevIdgHtml + '</div>' +
+                '</div>' +
+              '</div>' +
+
+              '<div>' +
+                '<div style="font-size:0.72rem; text-transform:uppercase; color:#ef4444; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+                  '<span>🚨</span> Versão Recebida (Retrocesso):' +
+                '</div>' +
+                '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+                  '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
+                  '<div>' + currDgHgHtml + '</div>' +
+                  '<span style="color:#94a3b8;">Totalização:</span>' +
+                  '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
+                  '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
+                  '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
+                  '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
+                  '<div>' + currIdgHtml + '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+
+            '<div style="font-size:0.78rem; color:#fca5a5; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px;">' +
+              '<strong>⚠️ Diagnóstico:</strong> ' + motivoTexto +
+            '</div>' +
           '</div>' +
         '</div>';
       }
 
       container.innerHTML = html;
+      updateToggleAllDossieBtn();
 
       // Auto-seleciona a ocorrência corrente ou o primeiro item da lista
       if (rows.length > 0) {
