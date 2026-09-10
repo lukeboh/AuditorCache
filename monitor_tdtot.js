@@ -1130,13 +1130,13 @@ function getComparison(relPath) {
   };
 }
 
-function generateHtmlReport() {
+function generateHtmlReport(embeddedData = null) {
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dossiê de Auditoria: Fonte HMG vs Cache SIM (TDTot TSE)</title>
+  <title>Dossiê de Auditoria: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
   <style>
     :root {
       --bg: #0b132b;
@@ -1201,13 +1201,15 @@ function generateHtmlReport() {
     .tag-pleito { background: rgba(236, 72, 153, 0.15); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.35); font-weight: 700; }
     .tag-cargo { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
     .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .tag-hmg-title { color: var(--accent-purple); font-weight: 700; }
-    .tag-sim-title { color: var(--accent-blue); font-weight: 700; }
+    .tag-hmg-title { color: var(--accent-purple); font-weight: 700; background: rgba(168,85,247,0.15); padding: 1px 6px; border-radius: 3px; }
+    .tag-sim-title { color: var(--accent-blue); font-weight: 700; background: rgba(56,189,248,0.15); padding: 1px 6px; border-radius: 3px; }
 
     .btn { background: #7c3aed; color: white; border: none; padding: 7px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.80rem; }
     .btn:hover { background: #6d28d9; }
     .btn-copy { cursor: pointer; border: 1px solid #475569; background: #1e293b; color: #cbd5e1; border-radius: 5px; padding: 2px 7px; font-size: 0.72rem; font-weight: 500; }
     .btn-copy:hover { background: #334155; color: #fff; border-color: #64748b; }
+
+    .regression-card:hover { border-color: #38bdf8 !important; }
 
     /* ABAS DO DOSSIÊ */
     .tabs-nav { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
@@ -1218,24 +1220,35 @@ function generateHtmlReport() {
     /* AUTO REFRESH TOGGLE */
     .live-pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block; box-shadow: 0 0 8px #10b981; animation: pulseLive 2s infinite; }
     @keyframes pulseLive { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico de Auditoria Forense Dinâmico</h1>
+      <h1>🗳️ Dossiê Técnico de Auditoria Forense Completo</h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 10px;">
+      ${embeddedData ? `
+      <div style="display: flex; align-items: center; gap: 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
+        <span style="font-size: 0.9rem;">📦</span>
+        <span style="color: #38bdf8; font-weight: 700;">Dossiê Autônomo Offline</span>
+        <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(${embeddedData.exportedAt || 'Exportado'})</span>
+      </div>
+      <button onclick="window.print()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Imprimir / Salvar PDF">🖨️ Imprimir PDF</button>
+      ` : `
       <div style="display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
         <span class="live-pulse"></span>
         <span style="color: #34d399; font-weight: 600;">Dossiê Dinâmico</span>
         <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(atualizado agora)</span>
       </div>
       <button onclick="loadReportData()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Atualizar dados do dossiê">↺ Atualizar</button>
-      <a href="/" target="_blank" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem;" title="Abrir Dashboard Principal">📊 Abrir Dashboard</a>
+      <a href="/export/dossie-html" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Baixar arquivo HTML autônomo offline para compartilhamento">📥 Baixar HTML Offline</a>
+      <a href="/" target="_blank" class="btn" style="background: #475569; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Abrir Dashboard Principal">📊 Abrir Dashboard</a>
+      `}
     </div>
   </header>
 
@@ -1450,37 +1463,83 @@ function generateHtmlReport() {
     </table>
   </div>
 
-  <!-- SEÇÃO 2: REGISTRO DETALHADO DE REGRESSÕES TEMPORAIS -->
-  <div id="sectionRegs" class="card" style="padding: 14px 18px; display: none;">
+  <!-- SEÇÃO 2: REGISTRO DETALHADO DE REGRESSÕES TEMPORAIS (LAYOUT FORENSE SPLIT) -->
+  <div id="sectionRegs" class="card" style="padding: 16px 20px; display: none;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
       <div style="display: flex; align-items: center; gap: 8px;">
-        <strong style="font-size: 0.95rem; color: #f8fafc;">🚨 2. Dossiê Forense de Regressões Temporais Reais (Auditoria Estrita)</strong>
+        <strong style="font-size: 1.05rem; color: #f8fafc;">🚨 2. Dossiê Forense de Regressões Temporais Reais (Auditoria Estrita)</strong>
         <span id="regsTableCountBadge" style="font-size: 0.75rem; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); padding: 2px 8px; border-radius: 6px;">(carregando...)</span>
       </div>
-      <div style="font-size: 0.75rem; color: var(--text-muted);">
-        Clique nos botões de cada caso para inspecionar JSON e Evidências Raw
+      <div style="font-size: 0.78rem; color: var(--text-muted);">
+        Clique em qualquer ocorrência na coluna esquerda para fixar e auditar seus cabeçalhos HTTP e atributos de rede no painel direito.
       </div>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th class="sortable" onclick="setRegsSort('id')">ID <span id="sort_reg_id" class="sort-icon">⇅</span></th>
-          <th class="sortable" onclick="setRegsSort('timestamp_iso')">Data/Hora (ISO) <span id="sort_reg_timestamp_iso" class="sort-icon">⇅</span></th>
-          <th class="sortable" onclick="setRegsSort('servidor')">Servidor / Papel <span id="sort_reg_servidor" class="sort-icon">⇅</span></th>
-          <th class="sortable" onclick="setRegsSort('criterio')">Critério <span id="sort_reg_criterio" class="sort-icon">⇅</span></th>
-          <th class="sortable" onclick="setRegsSort('arquivo')">Arquivo Auditado <span id="sort_reg_arquivo" class="sort-icon">⇅</span></th>
-          <th class="sortable" onclick="setRegsSort('motivo')">Motivo / Violação Forense <span id="sort_reg_motivo" class="sort-icon">⇅</span></th>
-          <th>Versão Anterior (Mais Nova)</th>
-          <th>Versão Recebida (Retrocedeu)</th>
-          <th>Totalização / Seções</th>
-          <th>Evidência Gravada</th>
-        </tr>
-      </thead>
-      <tbody id="regsTableBody">
-        <tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">Carregando regressões...</td></tr>
-      </tbody>
-    </table>
+    <!-- Barra de Filtros Internos da Seção 2 -->
+    <div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+      <div style="flex:1; min-width:260px; display:flex; gap:6px;">
+        <input type="text" id="dossieRegSearchInput" placeholder="🔍 Buscar por ID (#26374), arquivo, UF, cargo, IP, GRN ou motivo..." oninput="applyFilters()" style="flex:1; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 12px; border-radius:6px; font-size:0.82rem; outline:none;" />
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">GRN:</label>
+        <input type="text" id="dossieRegFilterGrn" placeholder="Filtrar por Akamai-GRN..." oninput="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem; width:160px; outline:none;" />
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Servidor:</label>
+        <select id="dossieRegFilterServer" onchange="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem;">
+          <option value="">Todos os Servidores</option>
+          <option value="SIM">SIM (Cache Akamai)</option>
+          <option value="HMG">HMG (Fonte Oficial)</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">UF:</label>
+        <select id="dossieRegFilterUf" onchange="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem;">
+          <option value="">Todas as UFs</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
+        <select id="dossieRegFilterCriterion" onchange="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem;">
+          <option value="">Todos os Critérios</option>
+          <option value="TEMPO">DG/HG (Tempo Geração)</option>
+          <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
+          <option value="SEÇÕES">ST (Seções Apuradas)</option>
+          <option value="SEQUENCIAL">IDG (Sequencial)</option>
+        </select>
+      </div>
+      <div id="dossieRegShowingCount" style="font-size:0.78rem; color:#64748b; margin-left:auto;">
+        Exibindo 0 de 0
+      </div>
+    </div>
+
+    <!-- CORPO DA SEÇÃO: LAYOUT SPLIT EM 2 COLUNAS COM ROLAGEM INDEPENDENTE -->
+    <div style="display:flex; gap:16px; min-height:650px; height:calc(88vh - 220px); max-height:920px; overflow:hidden;">
+      
+      <!-- Coluna Esquerda: Feed / Lista de Ocorrências com Scroll Independente -->
+      <div id="dossieRegsListContainer" style="flex:1.05; min-width:0; overflow-y:auto; padding-right:8px; display:flex; flex-direction:column; gap:12px;">
+        <!-- Preenchido dinamicamente via JS -->
+      </div>
+
+      <!-- Coluna Direita: Painel Lateral Fixo com Detalhes Técnicos e Scroll Independente -->
+      <div id="dossieTechPanel" style="flex:0.95; min-width:460px; max-width:720px; background:#0f172a; border:1px solid #334155; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:inset 0 2px 8px rgba(0,0,0,0.3);">
+        <div style="background:#1e293b; padding:10px 14px; border-bottom:1px solid #334155; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+          <div style="font-size:0.85rem; font-weight:700; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+            <span>🌐</span> Painel Forense & Detalhes Técnicos
+          </div>
+          <div id="dossieTechPanelSelectedBadge" style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">
+            Nenhum selecionado
+          </div>
+        </div>
+        <div id="dossieTechPanelContent" style="flex:1; min-height:0; overflow-y:auto; padding:14px; font-size:0.78rem;">
+          <div style="text-align:center; padding:60px 20px; color:#64748b;">
+            <div style="font-size:2rem; margin-bottom:8px;">👈</div>
+            <div>Selecione qualquer ocorrência na lista à esquerda para auditar aqui seus metadados de rede, cabeçalhos de solicitação, resposta e controle de cache.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <footer style="margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.78rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
@@ -1893,6 +1952,13 @@ function generateHtmlReport() {
         rodadaObj = activeRodada;
       }
 
+      // Filtros internos específicos da Seção 2 (Dossiê)
+      const dQ = (document.getElementById('dossieRegSearchInput') ? document.getElementById('dossieRegSearchInput').value : '').toLowerCase().trim();
+      const dGrn = (document.getElementById('dossieRegFilterGrn') ? document.getElementById('dossieRegFilterGrn').value : '').toLowerCase().trim();
+      const dSrv = document.getElementById('dossieRegFilterServer') ? document.getElementById('dossieRegFilterServer').value : '';
+      const dUf = document.getElementById('dossieRegFilterUf') ? document.getElementById('dossieRegFilterUf').value.toLowerCase().trim() : '';
+      const dCrit = document.getElementById('dossieRegFilterCriterion') ? document.getElementById('dossieRegFilterCriterion').value.toUpperCase().trim() : '';
+
       const filteredRegs = rawRegressionsList.filter(reg => {
         if (rodadaObj) {
           const regUnix = new Date(reg.timestamp_iso).getTime();
@@ -1901,16 +1967,25 @@ function generateHtmlReport() {
         }
 
         if (fSrv && reg.servidor !== fSrv) return false;
+        if (dSrv && reg.servidor !== dSrv) return false;
 
         const meta = reg.fileMeta || {};
         if (fPleito && meta.pleito && meta.pleito !== fPleito && meta.pleito !== 'Todos') return false;
         if (fEle && meta.eleicao && meta.eleicao !== fEle) return false;
         if (fUf && meta.uf && meta.uf !== fUf) return false;
+        if (dUf && (meta.uf || '').toLowerCase() !== dUf) return false;
+
         if (fTipo && meta.tipo) {
           if (fTipo === 'Configuração' && !meta.tipo.includes('Configuração')) return false;
           else if (fTipo !== 'Configuração' && meta.tipo !== fTipo) return false;
         }
         if (fCargo && meta.cargo && meta.cargo !== fCargo) return false;
+
+        if (dCrit) {
+          const c = (reg.criterio || '').toUpperCase();
+          const m = (reg.motivo || '').toUpperCase();
+          if (!c.includes(dCrit) && !m.includes(dCrit)) return false;
+        }
 
         if (fStatus === 'REG_TIME') {
           if (!reg.criterio?.includes('TEMPO') && !reg.motivo?.includes('TEMPORAL')) return false;
@@ -1918,6 +1993,27 @@ function generateHtmlReport() {
           if (!reg.criterio?.includes('TOTALIZAÇÃO') && !reg.motivo?.includes('TOTALIZAÇÃO')) return false;
         } else if (fStatus === 'REG_ST') {
           if (!reg.criterio?.includes('SEÇÕES') && !reg.motivo?.includes('SEÇÕES')) return false;
+        }
+
+        if (dGrn) {
+          const rGrn = (reg.akamai_grn || '').toLowerCase();
+          const rRawGrn = (reg.rawMeta?.headers?.['akamai-grn'] || reg.rawMeta?.headers?.['x-akamai-grn'] || '').toLowerCase();
+          const matchTimelineGrn = (reg.timeline || []).some(step => (step.akamai_grn || '').toLowerCase().includes(dGrn));
+          if (!rGrn.includes(dGrn) && !rRawGrn.includes(dGrn) && !matchTimelineGrn) return false;
+        }
+
+        if (dQ) {
+          const cleanQ = dQ.replace(/^#/, '');
+          const matchId = String(reg.id || '').includes(cleanQ);
+          const matchIdg = String(reg.idg_recebido || '').includes(cleanQ) || String(reg.idg_anterior || '').includes(cleanQ);
+          const matchFile = (reg.arquivo || '').toLowerCase().includes(cleanQ);
+          const matchMotivo = (reg.motivo || '').toLowerCase().includes(cleanQ);
+          const matchServer = (reg.servidor || '').toLowerCase().includes(cleanQ);
+          const matchUf = (meta.uf || '').toLowerCase().includes(cleanQ);
+          const matchCargo = (meta.cargo || '').toLowerCase().includes(cleanQ);
+          const matchGrn = (reg.akamai_grn || '').toLowerCase().includes(cleanQ);
+          const matchIp = (reg.server_ip || '').toLowerCase().includes(cleanQ) || (reg.timeline || []).some(s => (s.server_ip || '').toLowerCase().includes(cleanQ));
+          if (!matchId && !matchIdg && !matchFile && !matchMotivo && !matchServer && !matchUf && !matchCargo && !matchGrn && !matchIp) return false;
         }
 
         if (q) {
@@ -1930,13 +2026,16 @@ function generateHtmlReport() {
         return true;
       });
 
-      const hasActiveFilters = Boolean(q || fSrv || fPleito || fEle || fUf || fTipo || fCargo || fStatus || (fRod && activeRodada && fRod !== String(activeRodada.id)));
+      const hasActiveFilters = Boolean(q || fSrv || fPleito || fEle || fUf || fTipo || fCargo || fStatus || dQ || dGrn || dSrv || dUf || dCrit || (fRod && activeRodada && fRod !== String(activeRodada.id)));
       const afb = document.getElementById('activeFiltersBadge');
       if (afb) afb.style.display = hasActiveFilters ? 'inline-block' : 'none';
 
       document.getElementById('kpiFilesVisible').textContent = filteredComp.length;
       document.getElementById('compTableCountBadge').textContent = '(' + filteredComp.length + ' de ' + rawComparisonList.length + ' arquivos)';
       document.getElementById('regsTableCountBadge').textContent = '(' + filteredRegs.length + ' de ' + rawRegressionsList.length + ' ocorrências)';
+      
+      const dossieCountEl = document.getElementById('dossieRegShowingCount');
+      if (dossieCountEl) dossieCountEl.textContent = 'Exibindo ' + filteredRegs.length + ' de ' + rawRegressionsList.length;
 
       renderCompTable(sortCompData(filteredComp));
       renderRegsTable(sortRegsData(filteredRegs));
@@ -2195,53 +2294,658 @@ function generateHtmlReport() {
       }
     }
 
-    function renderRegsTable(rows) {
-      const tbody = document.getElementById('regsTableBody');
-      tbody.innerHTML = '';
+    // =====================================================================
+    // SEÇÃO 2: RENDERIZAÇÃO FORENSE SPLIT COM TRILHA DE VERSÕES E PAINEL
+    // =====================================================================
+    const VERSION_PALETTES = [
+      { bg: 'rgba(6, 182, 212, 0.18)', border: '#0891b2', text: '#22d3ee', badgeBg: '#0891b2', name: 'Ciano' },
+      { bg: 'rgba(16, 185, 129, 0.18)', border: '#059669', text: '#34d399', badgeBg: '#059669', name: 'Esmeralda' },
+      { bg: 'rgba(245, 158, 11, 0.18)', border: '#d97706', text: '#fbbf24', badgeBg: '#d97706', name: 'Âmbar' },
+      { bg: 'rgba(168, 85, 247, 0.18)', border: '#9333ea', text: '#c084fc', badgeBg: '#9333ea', name: 'Roxo' },
+      { bg: 'rgba(249, 115, 22, 0.18)', border: '#ea580c', text: '#fb923c', badgeBg: '#ea580c', name: 'Laranja' },
+      { bg: 'rgba(236, 72, 153, 0.18)', border: '#db2777', text: '#f472b6', badgeBg: '#db2777', name: 'Rosa' },
+      { bg: 'rgba(59, 130, 246, 0.18)', border: '#2563eb', text: '#60a5fa', badgeBg: '#2563eb', name: 'Azul' },
+      { bg: 'rgba(132, 204, 22, 0.18)', border: '#65a30d', text: '#a3e635', badgeBg: '#65a30d', name: 'Lima' },
+      { bg: 'rgba(99, 102, 241, 0.18)', border: '#4f46e5', text: '#818cf8', badgeBg: '#4f46e5', name: 'Índigo' },
+      { bg: 'rgba(244, 63, 94, 0.18)', border: '#e11d48', text: '#fb7185', badgeBg: '#e11d48', name: 'Rubi' },
+      { bg: 'rgba(20, 184, 166, 0.18)', border: '#0d9488', text: '#2dd4bf', badgeBg: '#0d9488', name: 'Teal' },
+      { bg: 'rgba(234, 179, 8, 0.18)', border: '#ca8a04', text: '#fde047', badgeBg: '#ca8a04', name: 'Dourado' }
+    ];
 
-      if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 30px;">Nenhuma regressão temporal encontrada para os filtros e rodada selecionados.</td></tr>';
+    function getVersionKey(dg, hg, idg) {
+      const d = (dg || '').trim();
+      const h = (hg || '').trim();
+      const i = (idg || '').trim();
+      if (!d && !h && !i) return '';
+      return (d + ' ' + h).trim() + (i ? ('#' + i) : '');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    let selectedDossieRegressionId = null;
+
+    function renderRegsTable(rows) {
+      const container = document.getElementById('dossieRegsListContainer');
+      if (!container) return;
+
+      if (!rows || rows.length === 0) {
+        container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px; background:#0f172a; border-radius:8px; border:1px solid #334155;">Nenhuma ocorrência de regressão encontrada para os filtros aplicados.</div>';
+        const panelContent = document.getElementById('dossieTechPanelContent');
+        if (panelContent) {
+          panelContent.innerHTML = '<div style="text-align:center; padding:60px 20px; color:#64748b;"><div style="font-size:2rem; margin-bottom:8px;">🔍</div><div>Nenhuma ocorrência selecionada.</div></div>';
+        }
+        const badge = document.getElementById('dossieTechPanelSelectedBadge');
+        if (badge) badge.textContent = 'Nenhum selecionado';
+        selectedDossieRegressionId = null;
         return;
       }
 
-      for (const r of rows) {
-        const tr = document.createElement('tr');
-        const srvClass = r.servidor === 'HMG' ? 'badge-purple' : 'badge-yellow';
-        const rawFileName = r.evidencia_raw_path ? r.evidencia_raw_path.split(/[/\]/).pop() : '-';
+      let html = '';
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const timeStr = r.timestamp_iso ? new Date(r.timestamp_iso).toLocaleTimeString('pt-BR') : '-';
+        const elapsedText = r.timestamp_iso ? formatMinSec(Math.round((Date.now() - new Date(r.timestamp_iso).getTime()) / 1000)) + ' atrás' : '-';
 
-        let totAndSt = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
-        if (r.dt_recebido || r.secoes_recebido) {
-          totAndSt = '<div style="font-size:0.75rem; font-family:monospace;">' +
-            (r.dt_recebido ? '<div>Tot: ' + r.dt_recebido + ' ' + (r.ht_recebido || '') + '</div>' : '') +
-            (r.secoes_recebido ? '<div>Seções: ' + r.secoes_recebido + '</div>' : '') +
-          '</div>';
+        const serverRoleDesc = r.papel_servidor || (r.servidor === 'HMG' ? 'Origem / Primário' : 'Cache / Réplica');
+        const serverBadgeClass = r.servidor === 'HMG' ? 'badge-purple' : 'badge-yellow';
+
+        const critBadges = [];
+        if (r.criterio) {
+          if (r.criterio.includes('TEMPO') || r.criterio.includes('DG/HG')) critBadges.push('<span class="badge badge-danger">DG/HG TEMPO</span>');
+          if (r.criterio.includes('TOTALIZAÇÃO')) critBadges.push('<span class="badge badge-danger">DT/HT TOTALIZAÇÃO</span>');
+          if (r.criterio.includes('SEÇÕES')) critBadges.push('<span class="badge badge-danger">ST SEÇÕES</span>');
+          if (r.criterio.includes('SEQUENCIAL') || r.criterio.includes('IDG')) critBadges.push('<span class="badge badge-danger">IDG SEQUENCIAL</span>');
+        }
+        if (critBadges.length === 0) critBadges.push('<span class="badge badge-danger">REGRESSÃO FORENSE</span>');
+        const critBadgesHtml = critBadges.join(' ');
+
+        const prevTotStr = (r.dt_anterior ? r.dt_anterior + ' ' + (r.ht_anterior || '') : '-');
+        const currTotStr = (r.dt_recebido ? r.dt_recebido + ' ' + (r.ht_recebido || '') : '-');
+        const isTotRegression = Boolean(r.dt_recebido && r.dt_anterior && (r.dt_recebido < r.dt_anterior || (r.dt_recebido === r.dt_anterior && r.ht_recebido < r.ht_anterior)));
+
+        const prevStStr = (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior + ' seç' : '-');
+        const currStStr = (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido + ' seç' : '-');
+        const isStRegression = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
+
+        const uf = (r.fileMeta && r.fileMeta.uf) ? r.fileMeta.uf : '-';
+        const cargo = (r.fileMeta && r.fileMeta.cargo) ? r.fileMeta.cargo : '-';
+        const tipo = (r.fileMeta && r.fileMeta.tipo) ? r.fileMeta.tipo : '-';
+        const eleicao = (r.fileMeta && r.fileMeta.eleicao) ? r.fileMeta.eleicao : '-';
+        const motivoTexto = escapeHtml(r.motivo || r.detalhes || '');
+
+        // Construção do Esquema Cronológico (Linha do Tempo de Requisições)
+        const timelineList = r.timeline || [];
+        const versionMap = new Map();
+        let verCounter = 1;
+
+        for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
+          const step = timelineList[tIdx];
+          const vKey = getVersionKey(step.dg, step.hg, step.idg);
+          if (vKey && !versionMap.has(vKey)) {
+            const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+            versionMap.set(vKey, {
+              index: verCounter,
+              label: 'V' + verCounter,
+              palette: VERSION_PALETTES[paletteIndex],
+              dg: step.dg || '',
+              hg: step.hg || '',
+              idg: step.idg || '',
+              count: 0
+            });
+            verCounter++;
+          }
+          if (vKey && versionMap.has(vKey)) {
+            versionMap.get(vKey).count++;
+          }
         }
 
-        tr.innerHTML = 
-          '<td><strong>#' + r.id + '</strong></td>' +
-          '<td class="code" style="font-size:0.78rem; white-space:nowrap;">' + (r.timestamp_iso ? new Date(r.timestamp_iso).toLocaleString('pt-BR') : '-') + '</td>' +
-          '<td><span class="badge ' + srvClass + '">' + r.servidor + '</span><br><span style="font-size:0.70rem; color:var(--text-muted);">' + (r.papel_servidor || '') + '</span></td>' +
-          '<td><span class="badge badge-danger" style="font-size:0.70rem;">' + (r.criterio || 'TEMPORAL') + '</span></td>' +
-          '<td class="code" style="font-weight:bold; color:#f8fafc; font-size:0.80rem; max-width:260px; word-break:break-all;">' + r.arquivo + '</td>' +
-          '<td style="color:#f87171; font-weight:600; font-size:0.78rem;">' + (r.motivo || '-') + '</td>' +
-          '<td class="code" style="font-size:0.78rem;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '') + (r.idg_anterior ? '<br><span style="font-size:0.70rem; color:var(--text-muted);">IDG: ' + r.idg_anterior + '</span>' : '') + '</td>' +
-          '<td class="code" style="color:#f87171; font-weight:bold; font-size:0.78rem;">' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '') + (r.idg_recebido ? '<br><span style="font-size:0.70rem; opacity:0.85;">IDG: ' + r.idg_recebido + '</span>' : '') + '</td>' +
-          '<td>' + totAndSt + '</td>' +
-          '<td class="code" style="font-size:0.72rem; color:#94a3b8;" title="' + (r.evidencia_raw_path || '') + '">' + rawFileName + '</td>';
+        const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
+        const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
 
-        tbody.appendChild(tr);
+        if (prevVKey && !versionMap.has(prevVKey)) {
+          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+          versionMap.set(prevVKey, {
+            index: verCounter,
+            label: 'V' + verCounter,
+            palette: VERSION_PALETTES[paletteIndex],
+            dg: r.dg_anterior || '',
+            hg: r.hg_anterior || '',
+            idg: r.idg_anterior || '',
+            count: 0
+          });
+          verCounter++;
+        }
+
+        if (currVKey && !versionMap.has(currVKey)) {
+          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+          versionMap.set(currVKey, {
+            index: verCounter,
+            label: 'V' + verCounter,
+            palette: VERSION_PALETTES[paletteIndex],
+            dg: r.dg_recebido || '',
+            hg: r.hg_recebido || '',
+            idg: r.idg_recebido || '',
+            count: 0
+          });
+          verCounter++;
+        }
+
+        let timelineHtml = '';
+        if (timelineList.length > 0) {
+          let versionLegendHtml = '';
+          if (versionMap.size > 0) {
+            versionLegendHtml += '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.08); font-size:0.73rem;">' +
+              '<span style="color:#94a3b8; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><span>🏷️</span> Trilha Visual de Versões:</span>';
+            
+            versionMap.forEach(function(v) {
+              const vPal = v.palette;
+              const vDgHg = (v.hg || v.dg) ? ((v.dg ? v.dg.substring(0, 5) + ' ' : '') + v.hg) : '-';
+              const vIdg = v.idg ? (' • IDG ' + v.idg) : '';
+              versionLegendHtml += '<span style="display:inline-flex; align-items:center; gap:5px; background:' + vPal.bg + '; border:1px solid ' + vPal.border + '; color:' + vPal.text + '; padding:2px 8px; border-radius:5px; font-family:monospace; font-weight:700;">' +
+                '<span style="background:' + vPal.badgeBg + '; color:#fff; font-size:0.65rem; padding:1px 5px; border-radius:3px; font-weight:800;">' + v.label + '</span>' +
+                '<span>' + vDgHg + vIdg + '</span>' +
+                '<span style="opacity:0.65; font-size:0.68rem;">(' + v.count + 'x)</span>' +
+              '</span>';
+            });
+
+            versionLegendHtml += '</div>';
+          }
+
+          timelineHtml += '<div style="margin-bottom:12px; background:#0b132b; border:1px solid #334155; border-radius:8px; padding:12px 14px;">' +
+            '<div style="margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px;">' +
+              '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">' +
+                '<strong style="font-size:0.84rem; color:#38bdf8; display:flex; align-items:center; gap:6px;">' +
+                  '<span>⏱️</span> Esquema Cronológico de Eventos (Linha do Tempo das Requisições):' +
+                '</strong>' +
+                '<span style="font-size:0.72rem; color:#94a3b8;">' + timelineList.length + ' leituras no período</span>' +
+              '</div>' +
+              versionLegendHtml +
+            '</div>' +
+            '<div style="display:flex; flex-direction:column; gap:8px;">';
+
+          for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
+            const step = timelineList[tIdx];
+            const stepTime = new Date(step.call_time_iso || step.timestamp_iso).toLocaleTimeString('pt-BR');
+            const latencyBadge = (step.latency_ms !== null && step.latency_ms !== undefined) 
+              ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
+              : '';
+            const isReg = step.isRegressionPoint;
+            const isOrigin = step.servidor === 'HMG';
+            
+            const itemBg = isReg 
+              ? 'background:rgba(239,68,68,0.14); border:1px solid #ef4444;' 
+              : (isOrigin ? 'background:rgba(168,85,247,0.08); border:1px solid rgba(168,85,247,0.3);' : 'background:rgba(15,23,42,0.6); border:1px solid #1e293b;');
+            
+            const badgeServidor = isOrigin ? 'tag-hmg-title' : 'tag-sim-title';
+            const statusLabel = isReg 
+              ? '<span style="background:#dc2626; color:#fff; font-weight:700; padding:2px 8px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite;">🚨 DETECÇÃO DE REVERSÃO!</span>'
+              : (isOrigin ? '<span style="color:#c084fc; font-weight:600; font-size:0.72rem;">🟣 Origem Primária</span>' : '<span style="color:#10b981; font-weight:600; font-size:0.72rem;">✓ Leitura Normal</span>');
+
+            const stepDgHg = (step.dg || '-') + ' ' + (step.hg || '-');
+            const stepIdg = step.idg ? 'IDG: ' + step.idg : '';
+            const stepSt = (step.secoes !== null && step.secoes !== undefined) ? 'ST: ' + step.secoes + ' seç' : '';
+            const stepTot = (step.dt && step.ht) ? 'Tot: ' + step.dt + ' ' + step.ht : '';
+
+            const stepVKey = getVersionKey(step.dg, step.hg, step.idg);
+            const verInfo = versionMap.get(stepVKey);
+            const pal = verInfo ? verInfo.palette : { bg: 'rgba(255,255,255,0.05)', border: '#475569', text: '#cbd5e1', badgeBg: '#475569' };
+            const verBadge = verInfo ? ('<span style="background:' + pal.badgeBg + '; color:#fff; font-size:0.65rem; padding:1px 5px; border-radius:3px; font-weight:800; font-family:monospace;">' + verInfo.label + '</span>') : '';
+
+            const chipDgHg = '<span style="display:inline-flex; align-items:center; gap:5px; background:' + pal.bg + '; border:1px solid ' + pal.border + '; color:' + pal.text + '; padding:2px 8px; border-radius:5px; font-family:monospace; font-size:0.74rem; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.2);">' +
+              verBadge +
+              '<span>DG/HG: ' + escapeHtml(stepDgHg) + '</span>' +
+            '</span>';
+
+            const chipIdg = step.idg ? ('<span style="display:inline-flex; align-items:center; background:' + pal.bg + '; border:1px solid ' + pal.border + '; color:' + pal.text + '; padding:2px 7px; border-radius:5px; font-family:monospace; font-size:0.72rem; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.2);">' +
+              escapeHtml(stepIdg) +
+            '</span>') : '';
+
+            timelineHtml += '<div style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
+              '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">' +
+                '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+                  '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;" title="Instante de envio da requisição (Disparo)">• ' + stepTime + '</strong>' +
+                  latencyBadge +
+                  '<span class="' + badgeServidor + '" style="font-size:0.70rem; padding:1px 6px; border-radius:3px;">' + step.servidor + '</span>' +
+                  chipDgHg +
+                  (chipIdg ? chipIdg : '') +
+                  (stepSt ? '<span style="font-family:monospace; color:#34d399; font-size:0.72rem;">' + stepSt + '</span>' : '') +
+                  (stepTot ? '<span style="font-family:monospace; color:#fbbf24; font-size:0.72rem;">' + stepTot + '</span>' : '') +
+                '</div>' +
+                '<div>' + statusLabel + '</div>' +
+              '</div>' +
+
+              '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:#94a3b8; font-family:monospace; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px; margin-top:4px;">' +
+                '<span>⏱️ Chamada: <strong style="color:#e2e8f0;">' + ((step.call_time_iso ? step.call_time_iso.slice(11, 19) : stepTime)) + '</strong></span>' +
+                '<span>🌐 IP Borda: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
+                '<span>⚡ Cache-Control: <strong style="color:#f8fafc;">' + (step.cache_control || '-') + '</strong></span>' +
+                '<span>📦 CDN Cache: <strong style="color:#34d399;">' + (step.cdn_status || '-') + '</strong></span>' +
+                '<span>🏷️ ETag: <span style="color:#cbd5e1;">' + (step.etag || '-') + '</span></span>' +
+                (step.akamai_grn && step.akamai_grn !== '-' ? '<span>🆔 GRN: <strong style="color:#c084fc;" title="Akamai Global Request Number">' + escapeHtml(step.akamai_grn) + '</strong></span>' : '') +
+                (step.age && step.age !== '-' ? '<span>⏳ Age: ' + step.age + '</span>' : '') +
+              '</div>' +
+            '</div>';
+          }
+
+          timelineHtml += '</div></div>';
+        }
+
+        const caseGrn = r.akamai_grn || (r.rawMeta && r.rawMeta.headers && (r.rawMeta.headers['akamai-grn'] || r.rawMeta.headers['x-akamai-grn'])) || null;
+        const caseGrnBadge = caseGrn ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:2px 8px; border-radius:4px;" title="Akamai Global Request Number (GRN)">🆔 GRN: ' + escapeHtml(caseGrn) + '</span> ') : '';
+
+        const prevVerInfo = versionMap.get(prevVKey);
+        const prevPal = prevVerInfo ? prevVerInfo.palette : null;
+        const prevVerBadge = prevVerInfo ? ('<span style="background:' + prevPal.badgeBg + '; color:#fff; font-size:0.62rem; padding:1px 5px; border-radius:3px; font-weight:800; font-family:monospace; margin-right:4px;">' + prevVerInfo.label + '</span>') : '';
+        const prevDgHgHtml = prevPal ? (
+          '<span style="display:inline-flex; align-items:center; background:' + prevPal.bg + '; border:1px solid ' + prevPal.border + '; color:' + prevPal.text + '; padding:2px 8px; border-radius:4px; font-weight:700;">' +
+            prevVerBadge + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') +
+          '</span>'
+        ) : ('<strong style="color:#f8fafc;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</strong>');
+
+        const prevIdgHtml = (r.idg_anterior && prevPal) ? (
+          '<span style="background:' + prevPal.bg + '; border:1px solid ' + prevPal.border + '; color:' + prevPal.text + '; padding:1px 6px; border-radius:4px; font-weight:700;">' +
+            r.idg_anterior +
+          '</span>'
+        ) : (r.idg_anterior || '-');
+
+        const currVerInfo = versionMap.get(currVKey);
+        const currPal = currVerInfo ? currVerInfo.palette : null;
+        const currVerBadge = currVerInfo ? ('<span style="background:' + currPal.badgeBg + '; color:#fff; font-size:0.62rem; padding:1px 5px; border-radius:3px; font-weight:800; font-family:monospace; margin-right:4px;">' + currVerInfo.label + '</span>') : '';
+        const currDgHgHtml = currPal ? (
+          '<span style="display:inline-flex; align-items:center; background:' + currPal.bg + '; border:1px solid ' + currPal.border + '; color:' + currPal.text + '; padding:2px 8px; border-radius:4px; font-weight:700;">' +
+            currVerBadge + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') +
+          '</span>'
+        ) : ('<strong style="color:#ef4444;">' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</strong>');
+
+        const currIdgHtml = (r.idg_recebido && currPal) ? (
+          '<span style="background:' + currPal.bg + '; border:1px solid ' + currPal.border + '; color:' + currPal.text + '; padding:1px 6px; border-radius:4px; font-weight:700;">' +
+            r.idg_recebido +
+          '</span>'
+        ) : (r.idg_recebido || '-');
+
+        html += '<div id="dossieCard_' + r.id + '" class="regression-card" onclick="selectDossieRegression(' + r.id + ')" style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25); cursor:pointer; transition:all 0.15s ease;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' +
+            '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+              '<span style="font-family:monospace; font-weight:700; font-size:0.82rem; background:rgba(239,68,68,0.2); color:#fca5a5; padding:2px 8px; border-radius:4px; border:1px solid rgba(239,68,68,0.4);">#' + r.id + '</span>' +
+              '<span style="font-size:0.80rem; color:#94a3b8; font-family:monospace;">⏱️ ' + timeStr + ' (' + elapsedText + ')</span>' +
+              '<span class="' + serverBadgeClass + '" style="font-size:0.75rem; padding:2px 8px; border-radius:4px;">' + r.servidor + ' (' + serverRoleDesc + ')</span>' +
+              critBadgesHtml +
+              caseGrnBadge +
+            '</div>' +
+            '<div style="display:flex; align-items:center; gap:6px;">' +
+              (!window.STANDALONE_DOSSIER_DATA ? (
+                '<a href="/api/evidencia?id=' + r.id + '" target="_blank" onclick="event.stopPropagation();" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Ver payload JSON raw">🔍 Ver JSON</a>' +
+                '<a href="/api/evidencia?id=' + r.id + '&download=1" target="_blank" onclick="event.stopPropagation();" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Baixar JSON da evidência">⬇️ Baixar JSON</a>'
+              ) : '') +
+              '<button type="button" onclick="event.stopPropagation(); selectDossieRegression(' + r.id + ');" class="btn-copy" style="font-size:0.72rem; padding:3px 10px; background:#1e293b; border:1px solid #38bdf8; color:#38bdf8;" id="btnDossieInspect_' + r.id + '">🌐 Inspecionar Painel 👉</button>' +
+            '</div>' +
+          '</div>' +
+
+          '<div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; font-size:0.82rem;">' +
+            '<span style="color:#38bdf8; font-weight:700; font-family:monospace; word-break:break-all;">' + r.arquivo + '</span>' +
+            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">UF: <strong>' + uf + '</strong></span>' +
+            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Cargo: <strong>' + cargo + '</strong></span>' +
+            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Tipo: <strong>' + tipo + '</strong></span>' +
+            '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Eleição: <strong>' + eleicao + '</strong></span>' +
+          '</div>' +
+
+          timelineHtml +
+
+          '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:8px; font-size:0.80rem;">' +
+            '<div>' +
+              '<div style="font-size:0.72rem; text-transform:uppercase; color:#10b981; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+                '<span>✓</span> Versão Anterior Mais Recente:' +
+              '</div>' +
+              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+                '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
+                '<div>' + prevDgHgHtml + '</div>' +
+                '<span style="color:#94a3b8;">Totalização:</span>' +
+                '<span style="color:#f8fafc;">' + prevTotStr + '</span>' +
+                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
+                '<span style="color:#f8fafc;">' + prevStStr + '</span>' +
+                '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
+                '<div>' + prevIdgHtml + '</div>' +
+              '</div>' +
+            '</div>' +
+
+            '<div>' +
+              '<div style="font-size:0.72rem; text-transform:uppercase; color:#ef4444; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+                '<span>🚨</span> Versão Recebida (Retrocesso):' +
+              '</div>' +
+              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+                '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
+                '<div>' + currDgHgHtml + '</div>' +
+                '<span style="color:#94a3b8;">Totalização:</span>' +
+                '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
+                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
+                '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
+                '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
+                '<div>' + currIdgHtml + '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+
+          '<div style="font-size:0.78rem; color:#fca5a5; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px;">' +
+            '<strong>⚠️ Diagnóstico:</strong> ' + motivoTexto +
+          '</div>' +
+        '</div>';
+      }
+
+      container.innerHTML = html;
+
+      // Auto-seleciona a ocorrência corrente ou o primeiro item da lista
+      if (rows.length > 0) {
+        const exists = selectedDossieRegressionId && rows.some(item => item.id === selectedDossieRegressionId);
+        const targetId = exists ? selectedDossieRegressionId : rows[0].id;
+        selectDossieRegression(targetId);
       }
     }
 
-    // Inicialização
+    function selectDossieRegression(id) {
+      selectedDossieRegressionId = id;
+      const r = rawRegressionsList.find(item => item.id === id);
+      if (!r) return;
+
+      const allCards = document.querySelectorAll('#dossieRegsListContainer .regression-card');
+      allCards.forEach(function(card) {
+        card.style.borderColor = 'rgba(239,68,68,0.35)';
+        card.style.background = '#0f172a';
+        card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+      });
+
+      const selectedCard = document.getElementById('dossieCard_' + id);
+      if (selectedCard) {
+        selectedCard.style.borderColor = '#38bdf8';
+        selectedCard.style.background = '#132338';
+        selectedCard.style.boxShadow = '0 0 16px rgba(56,189,248,0.25)';
+      }
+
+      const allInspectBtns = document.querySelectorAll('[id^="btnDossieInspect_"]');
+      allInspectBtns.forEach(function(btn) {
+        btn.textContent = '🌐 Inspecionar Painel 👉';
+        btn.style.background = '#1e293b';
+        btn.style.borderColor = '#38bdf8';
+        btn.style.color = '#38bdf8';
+      });
+      const currentInspectBtn = document.getElementById('btnDossieInspect_' + id);
+      if (currentInspectBtn) {
+        currentInspectBtn.textContent = '🔍 INSPECIONANDO ATIVO';
+        currentInspectBtn.style.background = '#0284c7';
+        currentInspectBtn.style.borderColor = '#38bdf8';
+        currentInspectBtn.style.color = '#ffffff';
+      }
+
+      const badge = document.getElementById('dossieTechPanelSelectedBadge');
+      if (badge) {
+        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | ' + escapeHtml(r.arquivo);
+      }
+
+      renderDossieTechDetails(r);
+    }
+
+    function renderDossieTechDetails(r) {
+      const panelContent = document.getElementById('dossieTechPanelContent');
+      if (!panelContent) return;
+
+      const rawHeaders = (r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers || {};
+      const rawReqHeaders = (r.rawMeta && r.rawMeta.request_headers) || r.request_headers || {};
+      const serverIp = rawHeaders['x-server-ip'] || (r.rawMeta && r.rawMeta.serverIp) || r.server_ip || '-';
+      const cdnCache = rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
+      const cacheControl = rawHeaders['cache-control'] || '-';
+      const expires = rawHeaders['expires'] || '-';
+      const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
+      const etag = rawHeaders['etag'] || '-';
+      const lastModified = rawHeaders['last-modified'] || '-';
+      const dateHttp = rawHeaders['date'] || '-';
+      const webServer = rawHeaders['server'] || (r.servidor === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
+      const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
+      const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
+      const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
+      const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+      const rawPath = r.evidencia_raw_path ? r.evidencia_raw_path : '(salvo no buffer SQLite)';
+
+      let reqHeadersRowsHtml = '';
+      const reqEntries = Object.entries(rawReqHeaders);
+      if (reqEntries.length > 0) {
+        for (let j = 0; j < reqEntries.length; j++) {
+          const k = reqEntries[j][0];
+          const v = reqEntries[j][1];
+          const lk = k.toLowerCase();
+          const isCacheHdr = ['cache-control', 'pragma', 'if-modified-since', 'if-none-match'].includes(lk);
+          reqHeadersRowsHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            '<td style="padding:5px 8px; color:' + (isCacheHdr ? '#38bdf8; font-weight:700;' : '#94a3b8;') + '; font-family:monospace; width:200px;">' +
+              (isCacheHdr ? '<span style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CACHE</span>' : '') +
+              escapeHtml(k) +
+            '</td>' +
+            '<td style="padding:5px 8px; color:' + (isCacheHdr ? '#f8fafc; font-weight:600;' : '#cbd5e1;') + '; font-family:monospace; word-break:break-all;">' +
+              escapeHtml(String(v)) +
+            '</td>' +
+          '</tr>';
+        }
+      } else {
+        reqHeadersRowsHtml = '<tr><td colspan="2" style="padding:6px 8px; color:#64748b; font-style:italic;">Cabeçalhos padrão registrados.</td></tr>';
+      }
+
+      let respHeadersRowsHtml = '';
+      const respEntries = Object.entries(rawHeaders);
+      if (respEntries.length > 0) {
+        for (let j = 0; j < respEntries.length; j++) {
+          const k = respEntries[j][0];
+          const v = respEntries[j][1];
+          const lk = k.toLowerCase();
+          const isCacheHdr = ['cache-control', 'pragma', 'expires', 'age', 'etag', 'last-modified', 'date', 'vary'].includes(lk);
+          const isCdnHdr = ['akamai-grn', 'x-akamai-grn', 'cdn-cache-status', 'x-cache', 'x-cache-lookup', 'x-cache-hits', 'x-check-cacheable', 'x-true-cache-key', 'x-cache-key', 'server-timing'].includes(lk);
+          const isIpOrServer = ['x-server-ip', 'server'].includes(lk);
+
+          let tagBadge = '';
+          let valColor = '#cbd5e1';
+          let keyColor = '#94a3b8';
+
+          if (isCacheHdr) {
+            tagBadge = '<span style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CACHE</span>';
+            keyColor = '#34d399';
+            valColor = '#f8fafc; font-weight:bold';
+          } else if (isCdnHdr) {
+            tagBadge = '<span style="background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CDN</span>';
+            keyColor = '#c084fc';
+            valColor = '#f8fafc; font-weight:bold';
+          } else if (isIpOrServer) {
+            tagBadge = '<span style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">REDE</span>';
+            keyColor = '#38bdf8';
+            valColor = '#f8fafc';
+          }
+
+          respHeadersRowsHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            '<td style="padding:5px 8px; color:' + keyColor + '; font-family:monospace; width:200px;">' +
+              tagBadge + escapeHtml(k) +
+            '</td>' +
+            '<td style="padding:5px 8px; color:' + valColor + '; font-family:monospace; word-break:break-all;">' +
+              escapeHtml(String(v)) +
+            '</td>' +
+          '</tr>';
+        }
+      } else {
+        respHeadersRowsHtml = '<tr><td colspan="2" style="padding:6px 8px; color:#64748b; font-style:italic;">Nenhum cabeçalho de resposta registrado.</td></tr>';
+      }
+
+      panelContent.innerHTML = 
+        '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
+            '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
+            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (r.servidor === 'HMG' ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+          '</div>' +
+          '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
+        '</div>' +
+
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📍</span> Metadados de Rede e Conexão:' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid #334155;">' +
+            '<tbody>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Instância / IP Borda (x-server-ip)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + serverIp + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Akamai-GRN</td>' +
+                '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 8px; word-break:break-all;">' + (caseGrn || '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Instante de Disparo (T_call)</td>' +
+                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (r.call_time_iso || r.timestamp_iso) + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Latência de Rede (RTT)</td>' +
+                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Camada Web (Server)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + webServer + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">URL da Requisição</td>' +
+                '<td style="color:#38bdf8; font-family:monospace; padding:5px 8px; word-break:break-all;">' + (originUrl !== '-' ? ('<a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a>') : '-') + '</td>' +
+              '</tr>' +
+              '<tr>' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Arquivo Raw Gravado</td>' +
+                '<td style="color:#64748b; font-family:monospace; padding:5px 8px; word-break:break-all;">' + rawPath + '</td>' +
+              '</tr>' +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#34d399; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>⚡</span> Diretivas e Headers de Controle de Cache (RFC 7234 & Akamai CDN):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(16,185,129,0.3);">' +
+            '<tbody>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Cache-Control (Resposta)</td>' +
+                '<td style="color:#f8fafc; font-weight:bold; font-family:monospace; padding:5px 8px;">' + cacheControl + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Cache-Control (Solicitação)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + reqCacheControl + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">CDN Cache Status</td>' +
+                '<td style="color:#34d399; font-weight:bold; font-family:monospace; padding:5px 8px;">' + cdnCache + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Idade em Cache (Age)</td>' +
+                '<td style="color:#f8fafc; font-family:monospace; padding:5px 8px;">' + age + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Expiração HTTP (Expires)</td>' +
+                '<td style="color:#f8fafc; font-family:monospace; padding:5px 8px;">' + expires + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Hash de Integridade (ETag)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px; word-break:break-all;">' + etag + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Última Modificação (Last-Modified)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + lastModified + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Data do Servidor HTTP (Date)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + dateHttp + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Diretiva Pragma</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + (rawHeaders['pragma'] || reqPragma || '-') + '</td>' +
+              '</tr>' +
+              '<tr>' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Diretiva de Variação (Vary)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + (rawHeaders['vary'] || '-') + '</td>' +
+              '</tr>' +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#38bdf8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📤</span> Cabeçalhos da Solicitação Enviada (HTTP Request Headers):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(56,189,248,0.25);">' +
+            '<thead>' +
+              '<tr style="background:#0f172a; border-bottom:1px solid #334155; text-align:left;">' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600; width:190px;">Header</th>' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600;">Valor Enviado</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+              reqHeadersRowsHtml +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        '<div>' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#c084fc; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📥</span> Cabeçalhos da Resposta Recebida (HTTP Response Headers - Todos):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(168,85,247,0.25);">' +
+            '<thead>' +
+              '<tr style="background:#0f172a; border-bottom:1px solid #334155; text-align:left;">' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600; width:190px;">Header</th>' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600;">Valor Recebido</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+              respHeadersRowsHtml +
+            '</tbody>' +
+          '</table>' +
+        '</div>';
+    }
+
+    function updateUfDropdowns(regs) {
+      const ufs = Array.from(new Set(regs.map(r => (r.fileMeta && r.fileMeta.uf) ? r.fileMeta.uf.toUpperCase() : '').filter(Boolean))).sort();
+      const dossieUfSel = document.getElementById('dossieRegFilterUf');
+      if (dossieUfSel && ufs.length > 0) {
+        const cur = dossieUfSel.value;
+        dossieUfSel.innerHTML = '<option value="">Todas as UFs</option>' + ufs.map(u => '<option value="' + u + '">' + u + '</option>').join('');
+        dossieUfSel.value = cur;
+      }
+    }
+
+    // Inicialização (Suporta Modo Online com Auto-Refresh e Modo Offline Autônomo)
+    window.STANDALONE_DOSSIER_DATA = ${embeddedData ? JSON.stringify(embeddedData) : 'null'};
+
     applyColumnVisibility();
-    loadReportData();
-    setInterval(loadReportData, 10000);
+
+    if (window.STANDALONE_DOSSIER_DATA) {
+      const d = window.STANDALONE_DOSSIER_DATA;
+      rawComparisonList = d.comparison || [];
+      rawRegressionsList = d.regressoes || [];
+      rawRodadasList = d.rodadas || [];
+      activeRodada = d.activeRodada || null;
+      latestApiData = d;
+      updateRodadasDropdown();
+      updatePleitosDropdown(rawComparisonList);
+      updateUfDropdowns(rawRegressionsList);
+      updateKpis({
+        comparison: rawComparisonList,
+        regressionsTimeCount: rawRegressionsList.length,
+        lastRegressionTime: d.lastRegressionTime || '-',
+        todaySlaStats: d.todaySlaStats,
+        cacheStats: d.cacheStats
+      }, { total: rawRegressionsList.length, regressoes: rawRegressionsList });
+      applyFilters();
+    } else {
+      loadReportData();
+      setInterval(loadReportData, 10000);
+    }
   </script>
 </body>
 </html>`;
 
-  fs.writeFileSync(REPORT_HTML, html, 'utf8');
+  if (!embeddedData) {
+    fs.writeFileSync(REPORT_HTML, html, 'utf8');
+  }
   return html;
 }
 
@@ -5201,24 +5905,43 @@ function setElText(id, val) {
     async function buscarRegressoesRemoto() {
       const searchInput = document.getElementById('regSearchInput');
       const grnInput = document.getElementById('regFilterGrn');
+      const serverInput = document.getElementById('regFilterServer');
+      const ufInput = document.getElementById('regFilterUf');
+      const critInput = document.getElementById('regFilterCriterion');
+
       const q = (searchInput ? searchInput.value : '').replace(/^#/, '').trim();
       const grn = (grnInput ? grnInput.value : '').trim();
-      if (!q && !grn) return;
+      const server = (serverInput ? serverInput.value : '').trim();
+      const uf = (ufInput ? ufInput.value : '').trim();
+      const crit = (critInput ? critInput.value : '').trim();
+
+      if (!q && !grn && !server && !uf && !crit) {
+        await loadRegressoesData();
+        return;
+      }
+
       const container = document.getElementById('regressoesListContainer');
       container.innerHTML = '<div style="text-align:center; padding:40px; color:#94a3b8; font-size:0.9rem;">⏳ Buscando no histórico completo do banco SQLite...</div>';
       try {
-        let fetchUrl = '/api/regressoes?limit=100';
+        let fetchUrl = '/api/regressoes?limit=250';
         if (q) fetchUrl += '&q=' + encodeURIComponent(q);
         if (grn) fetchUrl += '&grn=' + encodeURIComponent(grn);
+        if (server) fetchUrl += '&servidor=' + encodeURIComponent(server);
+        if (uf) fetchUrl += '&uf=' + encodeURIComponent(uf);
+        if (crit) fetchUrl += '&criterio=' + encodeURIComponent(crit);
+
         const res = await fetch(fetchUrl);
         const data = await res.json();
         if (data.regressoes && data.regressoes.length > 0) {
           allRegressoesData = data.regressoes;
-          document.getElementById('regModalRodadaNome').textContent = 'Busca Histórica: ' + (q || grn);
+          const searchTerms = [q ? '#' + q : '', grn ? 'GRN:' + grn : '', server, uf, crit].filter(Boolean).join(' | ');
+          document.getElementById('regModalRodadaNome').textContent = 'Busca Histórica (' + (searchTerms || 'Filtros') + ')';
           document.getElementById('regModalTotalCount').textContent = data.regressoes.length;
           renderFilteredRegressoes(true);
         } else {
-          container.innerHTML = '<div style="text-align:center; padding:40px; color:#ef4444;">Nenhuma ocorrência encontrada no banco para o termo buscado.</div>';
+          container.innerHTML = '<div style="text-align:center; padding:40px; color:#ef4444;">Nenhuma ocorrência encontrada no banco para os filtros informados.</div>';
+          const badge = document.getElementById('regShowingCount');
+          if (badge) badge.textContent = 'Exibindo 0 de 0';
         }
       } catch(e) {
         container.innerHTML = '<div style="text-align:center; padding:40px; color:#ef4444;">Erro na busca remota: ' + e.message + '</div>';
@@ -6344,6 +7067,7 @@ function setElText(id, val) {
         <div style="display:flex; align-items:center; gap:8px;">
           <button onclick="loadRegressoesData()" class="btn-copy" style="padding:5px 12px; font-size:0.75rem;" title="Recarregar dados">🔄 Atualizar</button>
           <a href="/download/csv-regressoes" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none;" title="Baixar histórico CSV">📊 Baixar CSV</a>
+          <a href="/export/dossie-html" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#0284c7; color:#fff; font-weight:600;" title="Exportar Dossiê HTML Completo e Autônomo Offline (compartilhável)">📥 Exportar HTML Offline</a>
           <a href="/report" target="_blank" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#dc2626; color:#fff;" title="Dossiê HTML para impressão">📄 Dossiê HTML</a>
           <button onclick="closeRegressoesModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.6rem; cursor:pointer; line-height:1; margin-left:8px;">&times;</button>
         </div>
@@ -6591,6 +7315,374 @@ function collectFilesForZip(baseDir, eleicaoFilter, minMtimeMs = null) {
   return files;
 }
 
+const evidenceMetaCache = new Map();
+function getRawMetadataFast(filePath) {
+  if (!filePath) return null;
+  if (evidenceMetaCache.has(filePath)) return evidenceMetaCache.get(filePath);
+  try {
+    if (fs.existsSync(filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const meta = parsed.metadata || null;
+      evidenceMetaCache.set(filePath, meta);
+      if (evidenceMetaCache.size > 300) {
+        const firstKey = evidenceMetaCache.keys().next().value;
+        evidenceMetaCache.delete(firstKey);
+      }
+      return meta;
+    }
+  } catch {}
+  evidenceMetaCache.set(filePath, null);
+  return null;
+}
+
+function getTodaySyncData() {
+  const now = Date.now();
+  if (cachedTodaySync && (now - lastTodaySyncFetch < 5000)) {
+    return cachedTodaySync;
+  }
+  const rodada = getActiveRodada();
+  const rodadaStartUnix = rodada ? rodada.inicio_unix : getTodayMidnightUnix();
+  
+  try {
+    const syncRows = db.prepare(`
+      WITH hmg_first AS (
+        SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
+        FROM leituras
+        WHERE servidor = 'HMG' AND timestamp_unix >= ?
+        GROUP BY arquivo, dg, hg
+      ),
+      sim_first AS (
+        SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
+        FROM leituras
+        WHERE servidor = 'SIM' AND timestamp_unix >= ?
+        GROUP BY arquivo, dg, hg
+      )
+      SELECT 
+        h.arquivo,
+        CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
+      FROM hmg_first h
+      JOIN sim_first s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
+    `).all(rodadaStartUnix, rodadaStartUnix);
+
+    const todaySyncByFile = {};
+    for (const row of syncRows) {
+      if (!todaySyncByFile[row.arquivo]) todaySyncByFile[row.arquivo] = [];
+      todaySyncByFile[row.arquivo].push(row.sync_sec);
+    }
+
+    const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+    const globalTodayStats = {
+      totalEvents: allTimes.length,
+      avgSec: allTimes.length ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length) : 0,
+      p90Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.90)] : 0,
+      p95Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.95)] : 0,
+      p99Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.99)] : 0,
+      p100Sec: allTimes.length ? allTimes[allTimes.length - 1] : 0
+    };
+
+    cachedTodaySync = { todaySyncByFile, globalTodayStats };
+  } catch(e) {
+    cachedTodaySync = { todaySyncByFile: {}, globalTodayStats: { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 } };
+  }
+  lastTodaySyncFetch = now;
+  return cachedTodaySync;
+}
+
+function getComparisonPayload() {
+  const originServer = getOriginServer();
+  const originKey = originServer ? originServer.chave : 'HMG';
+  const activeServersList = getActiveServers();
+  const comparisonList = [];
+
+  for (const relPath of Array.from(trackedFiles)) {
+    const originState = serverStates[originKey]?.get(relPath) || null;
+    const originUrl = (originServer ? originServer.baseUrl : '') + relPath;
+
+    const allServerStates = {};
+    for (const srv of activeServersList) {
+      allServerStates[srv.chave] = {
+        chave: srv.chave,
+        nome: srv.nome,
+        papel: srv.papel,
+        url: srv.baseUrl + relPath,
+        meta: serverStates[srv.chave]?.get(relPath) || null
+      };
+    }
+
+    const comp = getComparison(relPath);
+
+    comparisonList.push({
+      relPath,
+      filename: getFilename(relPath),
+      meta: parseFileMetadata(relPath),
+      originKey,
+      originUrl,
+      origin: originState,
+      allServers: allServerStates,
+      hmgUrl: (knownServers.get('HMG')?.baseUrl || originUrl) + (knownServers.get('HMG') ? relPath : ''),
+      simUrl: (comp.primaryReplicaKey && knownServers.get(comp.primaryReplicaKey)?.baseUrl ? knownServers.get(comp.primaryReplicaKey).baseUrl + relPath : (knownServers.get('SIM')?.baseUrl || originUrl)),
+      hmg: originState,
+      sim: (comp.primaryReplicaKey ? serverStates[comp.primaryReplicaKey]?.get(relPath) : null) || null,
+      comparison: comp
+    });
+  }
+
+  let regressionsTimeCount = 0;
+  let lastRegressionTime = '-';
+  const activeRodada = getActiveRodada();
+  const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
+  try {
+    const timeRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?`).get(rodadaStartIso);
+    regressionsTimeCount = timeRow ? timeRow.cnt : 0;
+    const lastRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE (criterio = 'TEMPORAL (DG/HG)' OR motivo LIKE 'REGRESSÃO TEMPORAL%') AND timestamp_iso >= ? ORDER BY id DESC LIMIT 1`).get(rodadaStartIso);
+    if (lastRow && lastRow.timestamp_iso) {
+      const d = new Date(lastRow.timestamp_iso);
+      lastRegressionTime = d.toLocaleTimeString('pt-BR');
+    }
+  } catch (e) {}
+
+  const { todaySyncByFile, globalTodayStats } = getTodaySyncData();
+
+  let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
+  let cdnHits = 0, cdnTotal = 0;
+
+  for (const item of comparisonList) {
+    if (item.sim && item.sim.maxAge !== null && !isNaN(item.sim.maxAge)) {
+      const ma = item.sim.maxAge;
+      simTtlSum += ma;
+      simTtlCount++;
+      if (simTtlMin === null || ma < simTtlMin) simTtlMin = ma;
+      if (simTtlMax === null || ma > simTtlMax) simTtlMax = ma;
+    }
+    if (item.sim && item.sim.cdnCacheStatus) {
+      cdnTotal++;
+      if (item.sim.cdnCacheStatus.toLowerCase().includes('hit')) cdnHits++;
+    }
+  }
+
+  const cacheStats = {
+    simAvgTtl: simTtlCount > 0 ? Math.round(simTtlSum / simTtlCount) : 60,
+    simTtlMin: simTtlMin ?? 0,
+    simTtlMax: simTtlMax ?? 60,
+    cdnHitRate: cdnTotal > 0 ? Math.round((cdnHits / cdnTotal) * 100) : 100,
+    originKey,
+    totalAudited: comparisonList.length
+  };
+
+  return {
+    servers: activeServersList,
+    allServers: Array.from(knownServers.values()),
+    originKey,
+    isMultiServer: activeServersList.length > 2,
+    comparison: comparisonList,
+    recentLogs: recentLogs.slice(0, 60),
+    regressionsTimeCount,
+    lastRegressionTime,
+    todaySyncByFile,
+    todaySlaStats: globalTodayStats,
+    cacheStats,
+    activeRodada: activeRodada,
+    totalChecks: totalChecksCount
+  };
+}
+
+function getEnrichedRegressions(filters = {}) {
+  const activeRodada = getActiveRodada();
+  const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
+  
+  const limit = filters.limit !== undefined ? filters.limit : 2000;
+  const q = (filters.q || '').trim();
+  const grnFilter = (filters.grn || '').trim();
+  const serverFilter = (filters.servidor || '').trim();
+  const criterionFilter = (filters.criterio || '').trim();
+  const ufFilter = (filters.uf || '').trim().toLowerCase();
+  const cargoFilter = (filters.cargo || '').trim().toLowerCase();
+  const eleicaoFilter = (filters.eleicao || '').trim();
+
+  let sql = 'SELECT * FROM regressoes WHERE 1=1 ';
+  const params = [];
+
+  if (q) {
+    const cleanQ = q.replace(/^#/, '');
+    const qNum = parseInt(cleanQ, 10);
+    if (!isNaN(qNum) && String(qNum) === cleanQ) {
+      sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+      params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+    } else {
+      sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+      params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+    }
+  } else if (!grnFilter && !filters.allRodada) {
+    sql += 'AND timestamp_iso >= ? ';
+    params.push(rodadaStartIso);
+  }
+
+  if (grnFilter) {
+    sql += 'AND (akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+    params.push(`%${grnFilter}%`, `%${grnFilter}%`, `%${grnFilter}%`);
+  }
+
+  if (serverFilter) {
+    sql += 'AND servidor = ? ';
+    params.push(serverFilter);
+  }
+
+  if (criterionFilter) {
+    sql += 'AND (criterio LIKE ? OR motivo LIKE ?) ';
+    params.push(`%${criterionFilter}%`, `%${criterionFilter}%`);
+  }
+
+  if (ufFilter) {
+    sql += 'AND (arquivo LIKE ? OR arquivo LIKE ? OR arquivo LIKE ?) ';
+    params.push(`%/dados/${ufFilter}/%`, `%/config/${ufFilter}/%`, `%-${ufFilter}-%`);
+  }
+
+  if (cargoFilter) {
+    sql += 'AND (arquivo LIKE ? OR motivo LIKE ?) ';
+    params.push(`%${cargoFilter}%`, `%${cargoFilter}%`);
+  }
+
+  if (eleicaoFilter) {
+    sql += 'AND arquivo LIKE ? ';
+    params.push(`%/${eleicaoFilter}/%`);
+  }
+
+  sql += 'ORDER BY id DESC ';
+  if (limit > 0) {
+    sql += 'LIMIT ? ';
+    params.push(limit);
+  }
+
+  const rows = db.prepare(sql).all(...params);
+  const stmtTimelineRange = db.prepare(`
+    SELECT 
+      id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
+      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
+      call_time_iso, call_time_unix, latency_ms
+    FROM leituras
+    WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
+    ORDER BY timestamp_unix ASC
+  `);
+  const stmtTimelineFallback = db.prepare(`
+    SELECT 
+      id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
+      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
+      call_time_iso, call_time_unix, latency_ms
+    FROM leituras
+    WHERE arquivo = ? AND timestamp_unix <= ?
+    ORDER BY timestamp_unix DESC
+    LIMIT 8
+  `);
+
+  const items = rows.map(r => {
+    let rawMeta = null;
+    let rawHeaders = {};
+    if (r.headers_json) {
+      try {
+        const parsed = JSON.parse(r.headers_json);
+        rawHeaders = parsed.response ? parsed.response : parsed;
+      } catch(e) {}
+    }
+    if (Object.keys(rawHeaders).length === 0 && r.evidencia_raw_path) {
+      rawMeta = getRawMetadataFast(r.evidencia_raw_path);
+      rawHeaders = (rawMeta && (rawMeta.response_headers || rawMeta.headers)) || {};
+    }
+
+    let rawReqHeaders = {};
+    if (r.request_headers_json) {
+      try { rawReqHeaders = JSON.parse(r.request_headers_json); } catch(e) {}
+    }
+    if (Object.keys(rawReqHeaders).length === 0 && rawMeta) {
+      rawReqHeaders = rawMeta.request_headers || {};
+    }
+    if (Object.keys(rawReqHeaders).length === 0) {
+      rawReqHeaders = {
+        'cache-control': 'no-cache, no-store, must-revalidate',
+        'pragma': 'no-cache',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+        'accept': 'application/json, text/plain, */*'
+      };
+    }
+    const cacheSummary = (rawMeta && rawMeta.cache_control_headers) || null;
+    const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+
+    const regUnix = new Date(r.timestamp_iso).getTime();
+    let timeline = stmtTimelineRange.all(r.arquivo, regUnix - 900000, regUnix + 120000);
+
+    if (timeline.length < 3) {
+      timeline = stmtTimelineFallback.all(r.arquivo, regUnix + 30000).reverse();
+    }
+
+    const enrichedTimeline = timeline.map(t => {
+      let tHeaders = {};
+      let tReqHeaders = {};
+      if (t.headers_json) {
+        try {
+          const parsed = JSON.parse(t.headers_json);
+          tHeaders = parsed.response ? parsed.response : parsed;
+          if (parsed.request) tReqHeaders = parsed.request;
+        } catch(e) {}
+      }
+      if (t.request_headers_json) {
+        try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
+      }
+      const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
+      const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
+      const tCdnStatus = t.cdn_status || tHeaders['cdn-cache-status'] || tHeaders['x-cache'] || (t.servidor === 'HMG' ? 'ORIGIN' : '-');
+      const tAkamaiGrn = t.akamai_grn || tHeaders['akamai-grn'] || tHeaders['x-akamai-grn'] || (t.id === r.id ? itemAkamaiGrn : null) || '-';
+      const tEtag = t.etag || tHeaders['etag'] || '-';
+      const tExpires = tHeaders['expires'] || '-';
+      const tAge = tHeaders['age'] !== undefined ? tHeaders['age'] + 's' : '-';
+      const isRegressionPoint = Boolean(t.status_ordem === 'REGRESSAO_DETECTADA' || t.id === r.id || (Math.abs(t.timestamp_unix - regUnix) < 2000 && t.servidor === r.servidor));
+
+      return {
+        id: t.id,
+        timestamp_iso: t.timestamp_iso,
+        timestamp_unix: t.timestamp_unix,
+        call_time_iso: t.call_time_iso || t.timestamp_iso,
+        call_time_unix: t.call_time_unix || t.timestamp_unix,
+        latency_ms: t.latency_ms !== undefined ? t.latency_ms : null,
+        servidor: t.servidor,
+        papel_servidor: t.papel_servidor,
+        dg: t.dg,
+        hg: t.hg,
+        dt: t.dt,
+        ht: t.ht,
+        idg: t.idg,
+        secoes: t.secoes,
+        status_ordem: t.status_ordem,
+        server_ip: tServerIp,
+        cache_control: tCacheControl,
+        cdn_status: tCdnStatus,
+        akamai_grn: tAkamaiGrn,
+        etag: tEtag,
+        expires: tExpires,
+        age: tAge,
+        isRegressionPoint
+      };
+    });
+
+    return {
+      ...r,
+      akamai_grn: itemAkamaiGrn,
+      fileMeta: parseFileMetadata(r.arquivo),
+      rawMeta,
+      request_headers: rawReqHeaders,
+      response_headers: rawHeaders,
+      cache_control_headers: cacheSummary,
+      timeline: enrichedTimeline
+    };
+  });
+
+  const countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?').get(rodadaStartIso);
+
+  return {
+    rodada: activeRodada,
+    total: countRow ? countRow.cnt : items.length,
+    regressoes: items
+  };
+}
+
 function startDashboardServer() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${DASHBOARD_PORT}`);
@@ -6608,6 +7700,61 @@ function startDashboardServer() {
         'Cache-Control': 'no-cache, no-store, must-revalidate'
       });
       res.end(htmlContent);
+      return;
+    }
+
+    if (url.pathname === '/export/dossie-html') {
+      try {
+        const limitParam = url.searchParams.get('limit');
+        const limit = limitParam !== null ? parseInt(limitParam, 10) : 500;
+        const q = (url.searchParams.get('q') || '').trim();
+        const grn = (url.searchParams.get('grn') || '').trim();
+        const servidor = (url.searchParams.get('servidor') || '').trim();
+        const criterio = (url.searchParams.get('criterio') || '').trim();
+        const uf = (url.searchParams.get('uf') || '').trim();
+        const cargo = (url.searchParams.get('cargo') || '').trim();
+        const eleicao = (url.searchParams.get('eleicao') || '').trim();
+        const allRodada = url.searchParams.get('allRodada') === 'true';
+
+        const compPayload = getComparisonPayload();
+        const regsPayload = getEnrichedRegressions({
+          limit,
+          allRodada: allRodada || (!q && !grn && !servidor && !criterio && !uf),
+          q,
+          grn,
+          servidor,
+          criterio,
+          uf,
+          cargo,
+          eleicao
+        });
+        const rodadasRows = db.prepare('SELECT * FROM rodadas ORDER BY id DESC').all();
+        const activeRodada = getActiveRodada();
+        
+        const standaloneBundle = {
+          exportedAt: new Date().toLocaleString('pt-BR'),
+          comparison: compPayload.comparison,
+          regressoes: regsPayload.regressoes,
+          rodadas: rodadasRows,
+          activeRodada: activeRodada,
+          cacheStats: compPayload.cacheStats,
+          todaySlaStats: compPayload.todaySlaStats,
+          lastRegressionTime: compPayload.lastRegressionTime,
+          regressionsTimeCount: regsPayload.total
+        };
+
+        const htmlContent = generateHtmlReport(standaloneBundle);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Disposition': `attachment; filename="dossie_forense_tdtot_${dateStr}.html"`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
+        });
+        res.end(htmlContent);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Erro ao exportar dossiê HTML: ' + err.message);
+      }
       return;
     }
 
@@ -7070,356 +8217,46 @@ function startDashboardServer() {
       return;
     }
 
-    
-
-
-function getTodaySyncData() {
-  const now = Date.now();
-  if (cachedTodaySync && (now - lastTodaySyncFetch < 5000)) {
-    return cachedTodaySync;
-  }
-  const rodada = getActiveRodada();
-  const rodadaStartUnix = rodada ? rodada.inicio_unix : getTodayMidnightUnix();
-  
-  try {
-    const syncRows = db.prepare(`
-      WITH hmg_first AS (
-        SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
-        FROM leituras
-        WHERE servidor = 'HMG' AND timestamp_unix >= ?
-        GROUP BY arquivo, dg, hg
-      ),
-      sim_first AS (
-        SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
-        FROM leituras
-        WHERE servidor = 'SIM' AND timestamp_unix >= ?
-        GROUP BY arquivo, dg, hg
-      )
-      SELECT 
-        h.arquivo,
-        CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
-      FROM hmg_first h
-      JOIN sim_first s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
-    `).all(rodadaStartUnix, rodadaStartUnix);
-
-    const todaySyncByFile = {};
-    for (const row of syncRows) {
-      if (!todaySyncByFile[row.arquivo]) todaySyncByFile[row.arquivo] = [];
-      todaySyncByFile[row.arquivo].push(row.sync_sec);
-    }
-
-    const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
-    const globalTodayStats = {
-      totalEvents: allTimes.length,
-      avgSec: allTimes.length ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length) : 0,
-      p90Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.90)] : 0,
-      p95Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.95)] : 0,
-      p99Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.99)] : 0,
-      p100Sec: allTimes.length ? allTimes[allTimes.length - 1] : 0
-    };
-
-    cachedTodaySync = { todaySyncByFile, globalTodayStats };
-  } catch(e) {
-    cachedTodaySync = { todaySyncByFile: {}, globalTodayStats: { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 } };
-  }
-  lastTodaySyncFetch = now;
-  return cachedTodaySync;
-}
 
     if (url.pathname === '/api/comparison') {
-      const originServer = getOriginServer();
-      const originKey = originServer ? originServer.chave : 'HMG';
-      const activeServersList = getActiveServers();
-      const comparisonList = [];
-
-      for (const relPath of Array.from(trackedFiles)) {
-        const originState = serverStates[originKey]?.get(relPath) || null;
-        const originUrl = (originServer ? originServer.baseUrl : '') + relPath;
-
-        const allServerStates = {};
-        for (const srv of activeServersList) {
-          allServerStates[srv.chave] = {
-            chave: srv.chave,
-            nome: srv.nome,
-            papel: srv.papel,
-            url: srv.baseUrl + relPath,
-            meta: serverStates[srv.chave]?.get(relPath) || null
-          };
-        }
-
-        const comp = getComparison(relPath);
-
-        comparisonList.push({
-          relPath,
-          filename: getFilename(relPath),
-          meta: parseFileMetadata(relPath),
-          originKey,
-          originUrl,
-          origin: originState,
-          allServers: allServerStates,
-          // Compatibilidade direta com interface existente
-          hmgUrl: (knownServers.get('HMG')?.baseUrl || originUrl) + (knownServers.get('HMG') ? relPath : ''),
-          simUrl: (comp.primaryReplicaKey && knownServers.get(comp.primaryReplicaKey)?.baseUrl ? knownServers.get(comp.primaryReplicaKey).baseUrl + relPath : (knownServers.get('SIM')?.baseUrl || originUrl)),
-          hmg: originState,
-          sim: (comp.primaryReplicaKey ? serverStates[comp.primaryReplicaKey]?.get(relPath) : null) || null,
-          comparison: comp
-        });
-      }
-
-      let regressionsTimeCount = 0;
-      let lastRegressionTime = '-';
-      const activeRodada = getActiveRodada();
-      const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
-      try {
-        const timeRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?`).get(rodadaStartIso);
-        regressionsTimeCount = timeRow ? timeRow.cnt : 0;
-        const lastRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE (criterio = 'TEMPORAL (DG/HG)' OR motivo LIKE 'REGRESSÃO TEMPORAL%') AND timestamp_iso >= ? ORDER BY id DESC LIMIT 1`).get(rodadaStartIso);
-        if (lastRow && lastRow.timestamp_iso) {
-          const d = new Date(lastRow.timestamp_iso);
-          lastRegressionTime = d.toLocaleTimeString('pt-BR');
-        }
-      } catch (e) {}
-
-      const { todaySyncByFile, globalTodayStats } = getTodaySyncData();
-
-      // Estatísticas Consolidadas de Cache & TTL
-      let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
-      let cdnHits = 0, cdnTotal = 0;
-
-      for (const item of comparisonList) {
-        if (item.sim && item.sim.maxAge !== null && !isNaN(item.sim.maxAge)) {
-          const ma = item.sim.maxAge;
-          simTtlSum += ma;
-          simTtlCount++;
-          if (simTtlMin === null || ma < simTtlMin) simTtlMin = ma;
-          if (simTtlMax === null || ma > simTtlMax) simTtlMax = ma;
-        }
-        if (item.sim && item.sim.cdnCacheStatus) {
-          cdnTotal++;
-          if (item.sim.cdnCacheStatus.toLowerCase().includes('hit')) cdnHits++;
-        }
-      }
-
-      const cacheStats = {
-        simAvgTtl: simTtlCount > 0 ? Math.round(simTtlSum / simTtlCount) : 60,
-        simTtlMin: simTtlMin ?? 0,
-        simTtlMax: simTtlMax ?? 60,
-        cdnHitRate: cdnTotal > 0 ? Math.round((cdnHits / cdnTotal) * 100) : 100,
-        originKey,
-        totalAudited: comparisonList.length
-      };
-
+      const payload = getComparisonPayload();
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       });
-      res.end(JSON.stringify({
-        servers: activeServersList,
-        allServers: Array.from(knownServers.values()),
-        originKey,
-        isMultiServer: activeServersList.length > 2,
-        comparison: comparisonList,
-        recentLogs: recentLogs.slice(0, 60),
-        regressionsTimeCount,
-        lastRegressionTime,
-        todaySyncByFile,
-        todaySlaStats: globalTodayStats,
-        cacheStats,
-        activeRodada: activeRodada,
-        totalChecks: totalChecksCount
-      }));
+      res.end(JSON.stringify(payload));
       return;
     }
 
-const evidenceMetaCache = new Map();
-function getRawMetadataFast(filePath) {
-  if (!filePath) return null;
-  if (evidenceMetaCache.has(filePath)) return evidenceMetaCache.get(filePath);
-  try {
-    if (fs.existsSync(filePath)) {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const meta = parsed.metadata || null;
-      evidenceMetaCache.set(filePath, meta);
-      if (evidenceMetaCache.size > 300) {
-        const firstKey = evidenceMetaCache.keys().next().value;
-        evidenceMetaCache.delete(firstKey);
-      }
-      return meta;
-    }
-  } catch {}
-  evidenceMetaCache.set(filePath, null);
-  return null;
-}
-
     // --- ROTA DE AUDITORIA FORENSE DE REGRESSÕES ---
     if (url.pathname === '/api/regressoes' && req.method === 'GET') {
-      const activeRodada = getActiveRodada();
-      const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
       try {
-        const countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?').get(rodadaStartIso);
         const limitParam = url.searchParams.get('limit');
         const limit = limitParam !== null ? parseInt(limitParam, 10) : 2000;
         const q = (url.searchParams.get('q') || '').trim();
-        const grnFilter = (url.searchParams.get('grn') || '').trim();
-        const serverFilter = (url.searchParams.get('servidor') || '').trim();
-        const criterionFilter = (url.searchParams.get('criterio') || '').trim();
+        const grn = (url.searchParams.get('grn') || '').trim();
+        const servidor = (url.searchParams.get('servidor') || '').trim();
+        const criterio = (url.searchParams.get('criterio') || '').trim();
+        const uf = (url.searchParams.get('uf') || '').trim();
+        const cargo = (url.searchParams.get('cargo') || '').trim();
+        const eleicao = (url.searchParams.get('eleicao') || '').trim();
 
-        let sql = 'SELECT * FROM regressoes WHERE 1=1 ';
-        const params = [];
-
-        if (q) {
-          const cleanQ = q.replace(/^#/, '');
-          const qNum = parseInt(cleanQ, 10);
-          if (!isNaN(qNum) && String(qNum) === cleanQ) {
-            sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
-            params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
-          } else {
-            sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
-            params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
-          }
-        } else if (!grnFilter) {
-          sql += 'AND timestamp_iso >= ? ';
-          params.push(rodadaStartIso);
-        }
-
-        if (grnFilter) {
-          sql += 'AND (akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
-          params.push(`%${grnFilter}%`, `%${grnFilter}%`, `%${grnFilter}%`);
-        }
-
-        if (serverFilter) {
-          sql += 'AND servidor = ? ';
-          params.push(serverFilter);
-        }
-
-        if (criterionFilter) {
-          sql += 'AND (criterio LIKE ? OR motivo LIKE ?) ';
-          params.push(`%${criterionFilter}%`, `%${criterionFilter}%`);
-        }
-
-        sql += 'ORDER BY id DESC ';
-        if (limit > 0) {
-          sql += 'LIMIT ? ';
-          params.push(limit);
-        }
-
-        const rows = db.prepare(sql).all(...params);
-        const stmtTimelineRange = db.prepare(`
-          SELECT 
-            id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
-            call_time_iso, call_time_unix, latency_ms
-          FROM leituras
-          WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
-          ORDER BY timestamp_unix ASC
-        `);
-        const stmtTimelineFallback = db.prepare(`
-          SELECT 
-            id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
-            call_time_iso, call_time_unix, latency_ms
-          FROM leituras
-          WHERE arquivo = ? AND timestamp_unix <= ?
-          ORDER BY timestamp_unix DESC
-          LIMIT 8
-        `);
-
-        const items = rows.map(r => {
-          const rawMeta = getRawMetadataFast(r.evidencia_raw_path);
-          const rawHeaders = (rawMeta && (rawMeta.response_headers || rawMeta.headers)) || {};
-          let rawReqHeaders = (rawMeta && rawMeta.request_headers) || {};
-          if (Object.keys(rawReqHeaders).length === 0 && r.request_headers_json) {
-            try { rawReqHeaders = JSON.parse(r.request_headers_json); } catch(e) {}
-          }
-          if (Object.keys(rawReqHeaders).length === 0) {
-            rawReqHeaders = {
-              'cache-control': 'no-cache, no-store, must-revalidate',
-              'pragma': 'no-cache',
-              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
-              'accept': 'application/json, text/plain, */*'
-            };
-          }
-          const cacheSummary = (rawMeta && rawMeta.cache_control_headers) || null;
-          const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
-
-          const regUnix = new Date(r.timestamp_iso).getTime();
-          // Busca histórico cronológico de leituras em torno da regressão (15 min antes e 2 min depois)
-          let timeline = stmtTimelineRange.all(r.arquivo, regUnix - 900000, regUnix + 120000);
-
-          if (timeline.length < 3) {
-            timeline = stmtTimelineFallback.all(r.arquivo, regUnix + 30000).reverse();
-          }
-
-          // Enriquece cada ponto da linha do tempo com headers essenciais (compacto para alto desempenho)
-          const enrichedTimeline = timeline.map(t => {
-            let tHeaders = {};
-            let tReqHeaders = {};
-            if (t.headers_json) {
-              try {
-                const parsed = JSON.parse(t.headers_json);
-                tHeaders = parsed.response ? parsed.response : parsed;
-                if (parsed.request) tReqHeaders = parsed.request;
-              } catch(e) {}
-            }
-            if (t.request_headers_json) {
-              try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
-            }
-            const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
-            const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
-            const tCdnStatus = t.cdn_status || tHeaders['cdn-cache-status'] || tHeaders['x-cache'] || (t.servidor === 'HMG' ? 'ORIGIN' : '-');
-            const tAkamaiGrn = t.akamai_grn || tHeaders['akamai-grn'] || tHeaders['x-akamai-grn'] || (t.id === r.id ? itemAkamaiGrn : null) || '-';
-            const tEtag = t.etag || tHeaders['etag'] || '-';
-            const tExpires = tHeaders['expires'] || '-';
-            const tAge = tHeaders['age'] !== undefined ? tHeaders['age'] + 's' : '-';
-            const isRegressionPoint = Boolean(t.status_ordem === 'REGRESSAO_DETECTADA' || t.id === r.id || (Math.abs(t.timestamp_unix - regUnix) < 2000 && t.servidor === r.servidor));
-
-            return {
-              id: t.id,
-              timestamp_iso: t.timestamp_iso,
-              timestamp_unix: t.timestamp_unix,
-              call_time_iso: t.call_time_iso || t.timestamp_iso,
-              call_time_unix: t.call_time_unix || t.timestamp_unix,
-              latency_ms: t.latency_ms !== undefined ? t.latency_ms : null,
-              servidor: t.servidor,
-              papel_servidor: t.papel_servidor,
-              dg: t.dg,
-              hg: t.hg,
-              dt: t.dt,
-              ht: t.ht,
-              idg: t.idg,
-              secoes: t.secoes,
-              status_ordem: t.status_ordem,
-              server_ip: tServerIp,
-              cache_control: tCacheControl,
-              cdn_status: tCdnStatus,
-              akamai_grn: tAkamaiGrn,
-              etag: tEtag,
-              expires: tExpires,
-              age: tAge,
-              isRegressionPoint
-            };
-          });
-
-          return {
-            ...r,
-            akamai_grn: itemAkamaiGrn,
-            fileMeta: parseFileMetadata(r.arquivo),
-            rawMeta,
-            request_headers: rawReqHeaders,
-            response_headers: rawHeaders,
-            cache_control_headers: cacheSummary,
-            timeline: enrichedTimeline
-          };
+        const payload = getEnrichedRegressions({
+          limit,
+          q,
+          grn,
+          servidor,
+          criterio,
+          uf,
+          cargo,
+          eleicao
         });
+
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         });
-        res.end(JSON.stringify({
-          rodada: activeRodada,
-          total: countRow ? countRow.cnt : items.length,
-          regressoes: items
-        }));
+        res.end(JSON.stringify(payload));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
