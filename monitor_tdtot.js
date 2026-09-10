@@ -240,12 +240,15 @@ try { db.exec('ALTER TABLE regressoes ADD COLUMN ht_anterior TEXT;'); } catch (e
 try { db.exec('ALTER TABLE regressoes ADD COLUMN dt_recebido TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN ht_recebido TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN headers_json TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN request_headers_json TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN server_ip TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN cache_control TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN cdn_status TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN max_age INTEGER;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN akamai_grn TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN akamai_grn TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN headers_json TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN request_headers_json TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN call_time_iso TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN call_time_unix INTEGER;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN latency_ms INTEGER;'); } catch (e) {}
@@ -257,15 +260,17 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_call_time ON leituras (ar
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_time ON regressoes (timestamp_iso);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_grn ON regressoes (akamai_grn);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_grn ON leituras (akamai_grn);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_headers ON regressoes (headers_json);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_req_headers ON leituras (request_headers_json);'); } catch (e) {}
 
 const stmtInsertLeitura = db.prepare(`
-  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertRegressao = db.prepare(`
-  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido, akamai_grn, call_time_iso, call_time_unix, latency_ms)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido, akamai_grn, call_time_iso, call_time_unix, latency_ms, headers_json, request_headers_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertComparativo = db.prepare(`
@@ -2281,6 +2286,37 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
   const latencyMs = meta.latencyMs !== undefined ? meta.latencyMs : null;
   const role = SERVERS[serverKey]?.role || serverKey;
 
+  const requestHeaders = meta.requestHeaders || {};
+  const responseHeaders = headers || {};
+
+  // Resumo de todas as diretivas e headers de controle de cache (RFC 7234, HTTP 1.1 e Akamai CDN)
+  const cacheControlSummary = {
+    request: {
+      'cache-control': requestHeaders['cache-control'] || requestHeaders['Cache-Control'] || null,
+      'pragma': requestHeaders['pragma'] || requestHeaders['Pragma'] || null,
+      'if-modified-since': requestHeaders['if-modified-since'] || requestHeaders['If-Modified-Since'] || null,
+      'if-none-match': requestHeaders['if-none-match'] || requestHeaders['If-None-Match'] || null
+    },
+    response: {
+      'cache-control': responseHeaders['cache-control'] || responseHeaders['Cache-Control'] || null,
+      'pragma': responseHeaders['pragma'] || responseHeaders['Pragma'] || null,
+      'expires': responseHeaders['expires'] || responseHeaders['Expires'] || null,
+      'age': responseHeaders['age'] !== undefined ? responseHeaders['age'] : null,
+      'etag': responseHeaders['etag'] || responseHeaders['ETag'] || null,
+      'last-modified': responseHeaders['last-modified'] || responseHeaders['Last-Modified'] || null,
+      'date': responseHeaders['date'] || responseHeaders['Date'] || null,
+      'vary': responseHeaders['vary'] || responseHeaders['Vary'] || null,
+      'cdn-cache-status': responseHeaders['cdn-cache-status'] || responseHeaders['x-cache'] || null,
+      'x-cache': responseHeaders['x-cache'] || null,
+      'x-cache-lookup': responseHeaders['x-cache-lookup'] || null,
+      'x-cache-hits': responseHeaders['x-cache-hits'] || null,
+      'x-check-cacheable': responseHeaders['x-check-cacheable'] || null,
+      'x-cache-key': responseHeaders['x-cache-key'] || responseHeaders['x-true-cache-key'] || null,
+      'akamai-grn': meta.akamaiGrn || responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'] || null,
+      'server': responseHeaders['server'] || null
+    }
+  };
+
   let rawFilePath = null;
 
   if (isRegression) {
@@ -2301,8 +2337,11 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
           latencia_ms: latencyMs,
           timestamp_coleta: timestampIso,
           source,
-          headers,
-          akamai_grn: meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
+          headers: responseHeaders, // compatibilidade retroativa
+          response_headers: responseHeaders,
+          request_headers: requestHeaders,
+          cache_control_headers: cacheControlSummary,
+          akamai_grn: meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
           isRegression,
           criterion,
           regressionDetails
@@ -2336,15 +2375,16 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       meta.dt || null,
       meta.ht || null,
       meta.totTime || null,
-      JSON.stringify(headers || {}),
+      JSON.stringify(responseHeaders || {}),
       meta.serverIp || null,
       meta.cacheControl || null,
       meta.cdnCacheStatus || null,
       meta.maxAge !== null && meta.maxAge !== undefined ? Number(meta.maxAge) : null,
-      meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
+      meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
       callTimeIso,
       callTimeUnix,
-      latencyMs
+      latencyMs,
+      JSON.stringify(requestHeaders || {})
     );
   } catch (e) {
     console.error('Erro ao gravar leitura no SQLite:', e.message);
@@ -2374,10 +2414,12 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
         meta.prevHt || null,
         meta.dt || null,
         meta.ht || null,
-        meta.akamaiGrn || (headers && (headers['akamai-grn'] || headers['x-akamai-grn'])) || null,
+        meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
         callTimeIso,
         callTimeUnix,
-        latencyMs
+        latencyMs,
+        JSON.stringify(responseHeaders || {}),
+        JSON.stringify(requestHeaders || {})
       );
 
       const regLine = [
@@ -2469,8 +2511,14 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   const expiresHeader = headers['expires'] || headers['Expires'] || null;
   const lastModifiedHeader = headers['last-modified'] || headers['Last-Modified'] || null;
   const serverHeader = headers['server'] || (serverKey === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
-  const serverIp = headers['x-server-ip'] || null;
+  const serverIp = headers['x-server-ip'] || timing.serverIp || null;
   const akamaiGrn = headers['akamai-grn'] || headers['x-akamai-grn'] || headers['x-akamai-request-id'] || headers['akamai-request-id'] || null;
+  const requestHeaders = timing.requestHeaders || {
+    'cache-control': 'no-cache, no-store, must-revalidate',
+    'pragma': 'no-cache',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+    'accept': 'application/json, text/plain, */*'
+  };
 
   const currentMeta = {
     cacheControl,
@@ -2482,6 +2530,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     serverHeader,
     serverIp,
     akamaiGrn,
+    requestHeaders,
     timestampIso: callTimeIso,
     timestampUnix: callTimeUnix,
     callTimeIso,
@@ -2766,14 +2815,17 @@ function httpRequestWithIp(urlStr) {
       const lib = u.protocol === 'https:' ? https : http;
       const callTimeUnix = Date.now();
       const callTimeIso = new Date(callTimeUnix).toISOString();
+      const requestHeaders = {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Encoding': 'gzip, deflate, br'
+      };
       const req = lib.request(u, {
         method: 'GET',
         timeout: 5000,
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0'
-        }
+        headers: requestHeaders
       }, (res) => {
         const serverIp = req.socket?.remoteAddress || null;
         const chunks = [];
@@ -2791,6 +2843,8 @@ function httpRequestWithIp(urlStr) {
             statusCode: res.statusCode,
             text,
             headers: headersObj,
+            responseHeaders: headersObj,
+            requestHeaders,
             serverIp,
             callTimeUnix,
             callTimeIso,
@@ -2805,13 +2859,15 @@ function httpRequestWithIp(urlStr) {
         ok: false,
         error: e.message,
         headers: {},
+        responseHeaders: {},
+        requestHeaders,
         callTimeUnix,
         callTimeIso,
         latencyMs: Date.now() - callTimeUnix
       }));
       req.end();
     } catch (err) {
-      finish({ ok: false, error: err.message, headers: {} });
+      finish({ ok: false, error: err.message, headers: {}, responseHeaders: {}, requestHeaders: {} });
     }
   });
 }
@@ -2837,7 +2893,9 @@ async function pollFile(relPath) {
         processVersion(srv.chave, relPath, payload, resp.text, 'Polling_Ativo', resp.headers, {
           callTimeUnix: resp.callTimeUnix,
           callTimeIso: resp.callTimeIso,
-          latencyMs: resp.latencyMs
+          latencyMs: resp.latencyMs,
+          requestHeaders: resp.requestHeaders,
+          serverIp: resp.serverIp
         });
       } catch {}
     }
@@ -2868,6 +2926,7 @@ async function attachTabObserver(tab) {
   const ws = new WebSocket(wsUrl);
   let reqCounter = 1;
   const pendingRequests = new Map();
+  const cdpRequestHeadersMap = new Map();
 
   ws.onopen = () => {
     activeWsConnections.set(tab.id, ws);
@@ -2878,6 +2937,22 @@ async function attachTabObserver(tab) {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+
+      if (data.method === 'Network.requestWillBeSent') {
+        const req = data.params?.request;
+        const requestId = data.params?.requestId;
+        if (requestId && req?.headers) {
+          const reqHeaders = {};
+          for (const [k, v] of Object.entries(req.headers)) {
+            reqHeaders[k.toLowerCase()] = v;
+          }
+          cdpRequestHeadersMap.set(requestId, reqHeaders);
+          if (cdpRequestHeadersMap.size > 2000) {
+            const firstKey = cdpRequestHeadersMap.keys().next().value;
+            cdpRequestHeadersMap.delete(firstKey);
+          }
+        }
+      }
 
       if (data.method === 'Network.responseReceived') {
         const resp = data.params.response;
@@ -2911,10 +2986,25 @@ async function attachTabObserver(tab) {
             const callTimeUnix = Date.now();
             const callTimeIso = new Date(callTimeUnix).toISOString();
 
+            let cdpReqHeaders = {};
+            if (resp.requestHeaders && Object.keys(resp.requestHeaders).length > 0) {
+              for (const [k, v] of Object.entries(resp.requestHeaders)) {
+                cdpReqHeaders[k.toLowerCase()] = v;
+              }
+            } else if (cdpRequestHeadersMap.has(requestId)) {
+              cdpReqHeaders = cdpRequestHeadersMap.get(requestId);
+            } else {
+              cdpReqHeaders = {
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/CDP',
+                'accept': 'application/json, text/plain, */*'
+              };
+            }
+
             pendingRequests.set(bodyCmdId, {
               serverKey,
               relPath,
               headers: headersWithIp,
+              requestHeaders: cdpReqHeaders,
               isFromCache,
               callTimeUnix,
               callTimeIso
@@ -2948,7 +3038,9 @@ async function attachTabObserver(tab) {
               {
                 callTimeUnix: reqInfo.callTimeUnix,
                 callTimeIso: reqInfo.callTimeIso,
-                skipRegression: reqInfo.isFromCache
+                skipRegression: reqInfo.isFromCache,
+                requestHeaders: reqInfo.requestHeaders,
+                serverIp: reqInfo.headers?.['x-server-ip'] || null
               }
             );
           }
@@ -5211,18 +5303,7 @@ function setElText(id, val) {
       let html = '';
       for (let i = 0; i < displayItems.length; i++) {
         const r = displayItems[i];
-        const rawHeaders = (r.rawMeta && r.rawMeta.headers) || {};
-        const serverIp = rawHeaders['x-server-ip'] || (r.rawMeta && r.rawMeta.serverIp) || '-';
-        const cdnCache = rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
-        const cacheControl = rawHeaders['cache-control'] || '-';
-        const expires = rawHeaders['expires'] || '-';
-        const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
-        const etag = rawHeaders['etag'] || '-';
-        const lastModified = rawHeaders['last-modified'] || '-';
-        const dateHttp = rawHeaders['date'] || '-';
-        const webServer = rawHeaders['server'] || (r.servidor === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
-        const amzRequestId = rawHeaders['x-amz-request-id'] || '-';
-        const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
+        const rawHeaders = (r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers || {};
 
         const dateObj = new Date(r.timestamp_iso);
         const timeStr = dateObj.toLocaleTimeString('pt-BR') + ' (' + dateObj.toLocaleDateString('pt-BR') + ')';
@@ -5260,7 +5341,6 @@ function setElText(id, val) {
         const tipo = (r.fileMeta && r.fileMeta.tipo) ? r.fileMeta.tipo : '-';
         const eleicao = (r.fileMeta && r.fileMeta.eleicao) ? r.fileMeta.eleicao : '-';
         const motivoTexto = escapeHtml(r.motivo || r.detalhes || '');
-        const rawPath = r.evidencia_raw_path ? r.evidencia_raw_path : '(salvo no buffer SQLite)';
 
         // Construção do Esquema Cronológico (Linha do Tempo de Requisições)
         const timelineList = r.timeline || [];
@@ -5424,7 +5504,7 @@ function setElText(id, val) {
         const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
         const caseGrnBadge = caseGrn ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:2px 8px; border-radius:4px;" title="Akamai Global Request Number (GRN)">🆔 GRN: ' + escapeHtml(caseGrn) + '</span> ') : '';
 
-        html += '<div style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25);">' +
+        html += '<div id="regCard_' + r.id + '" class="regression-card" data-regression-id="' + r.id + '" onclick="selectRegressionForDetails(' + r.id + ')" style="background:#0f172a; border:1px solid rgba(239,68,68,0.35); border-left:4px solid #ef4444; border-radius:8px; padding:14px; box-shadow:0 4px 12px rgba(0,0,0,0.25); cursor:pointer; transition:all 0.15s ease;">' +
           '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">' +
             '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
               '<span style="font-family:monospace; font-weight:700; font-size:0.82rem; background:rgba(239,68,68,0.2); color:#fca5a5; padding:2px 8px; border-radius:4px; border:1px solid rgba(239,68,68,0.4);">#' + r.id + '</span>' +
@@ -5434,9 +5514,9 @@ function setElText(id, val) {
               caseGrnBadge +
             '</div>' +
             '<div style="display:flex; align-items:center; gap:6px;">' +
-              '<a href="/api/evidencia?id=' + r.id + '" target="_blank" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Ver payload JSON raw">🔍 Ver JSON</a>' +
-              '<a href="/api/evidencia?id=' + r.id + '&download=1" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Baixar JSON da evidência">⬇️ Baixar JSON</a>' +
-              '<button onclick="toggleEvidenceDetails(' + r.id + ')" class="btn-copy" style="font-size:0.72rem; padding:3px 8px;" id="btnToggle_' + r.id + '">➕ Detalhes Técnicos</button>' +
+              '<a href="/api/evidencia?id=' + r.id + '" target="_blank" onclick="event.stopPropagation();" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Ver payload JSON raw">🔍 Ver JSON</a>' +
+              '<a href="/api/evidencia?id=' + r.id + '&download=1" target="_blank" onclick="event.stopPropagation();" class="btn-copy" style="font-size:0.72rem; padding:3px 8px; text-decoration:none;" title="Baixar JSON da evidência">⬇️ Baixar JSON</a>' +
+              '<button type="button" onclick="event.stopPropagation(); selectRegressionForDetails(' + r.id + ');" class="btn-copy" style="font-size:0.72rem; padding:3px 10px; background:#1e293b; border:1px solid #38bdf8; color:#38bdf8;" id="btnInspect_' + r.id + '">🌐 Inspecionar Painel 👉</button>' +
             '</div>' +
           '</div>' +
 
@@ -5480,17 +5560,17 @@ function setElText(id, val) {
           '</span>'
         ) : (r.idg_recebido || '-');
 
-        html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:10px; font-size:0.80rem;">' +
+        html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:8px; font-size:0.80rem;">' +
             '<div>' +
               '<div style="font-size:0.72rem; text-transform:uppercase; color:#10b981; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
-                '<span>✓</span> Versão Anterior Mais Recente Registrada:' +
+                '<span>✓</span> Versão Anterior Mais Recente:' +
               '</div>' +
-              '<div style="display:grid; grid-template-columns:130px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
                 '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
                 '<div>' + prevDgHgHtml + '</div>' +
-                '<span style="color:#94a3b8;">Totalização (DT/HT):</span>' +
+                '<span style="color:#94a3b8;">Totalização:</span>' +
                 '<span style="color:#f8fafc;">' + prevTotStr + '</span>' +
-                '<span style="color:#94a3b8;">Seções Apuradas (ST):</span>' +
+                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
                 '<span style="color:#f8fafc;">' + prevStStr + '</span>' +
                 '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
                 '<div>' + prevIdgHtml + '</div>' +
@@ -5499,14 +5579,14 @@ function setElText(id, val) {
 
             '<div>' +
               '<div style="font-size:0.72rem; text-transform:uppercase; color:#ef4444; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
-                '<span>🚨</span> Versão Recebida (Retrocesso Detectado):' +
+                '<span>🚨</span> Versão Recebida (Retrocesso):' +
               '</div>' +
-              '<div style="display:grid; grid-template-columns:130px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
+              '<div style="display:grid; grid-template-columns:120px 1fr; gap:4px 8px; font-family:monospace; align-items:center;">' +
                 '<span style="color:#94a3b8;">Geração (DG/HG):</span>' +
                 '<div>' + currDgHgHtml + '</div>' +
-                '<span style="color:#94a3b8;">Totalização (DT/HT):</span>' +
+                '<span style="color:#94a3b8;">Totalização:</span>' +
                 '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
-                '<span style="color:#94a3b8;">Seções Apuradas (ST):</span>' +
+                '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
                 '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
                 '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
                 '<div>' + currIdgHtml + '</div>' +
@@ -5514,70 +5594,8 @@ function setElText(id, val) {
             '</div>' +
           '</div>' +
 
-          '<div style="font-size:0.78rem; color:#fca5a5; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px; margin-bottom:6px;">' +
+          '<div style="font-size:0.78rem; color:#fca5a5; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px;">' +
             '<strong>⚠️ Diagnóstico:</strong> ' + motivoTexto +
-          '</div>' +
-
-          '<div id="techDetails_' + r.id + '" style="display:none; margin-top:10px; border-top:1px solid #334155; padding-top:10px; font-size:0.78rem;">' +
-            '<div style="font-weight:700; color:#38bdf8; margin-bottom:8px; display:flex; align-items:center; gap:6px;">' +
-              '<span>🌐</span> Atributos de Rede, Infraestrutura e Cabeçalhos HTTP da Evidência:' +
-            '</div>' +
-            '<table style="width:100%; border-collapse:collapse; font-size:0.75rem; background:#1e293b; border-radius:6px; overflow:hidden;">' +
-              '<tbody>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px; width:220px;">Instância / IP de Borda (x-server-ip)</td>' +
-                  '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 10px;">' + serverIp + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Akamai-GRN (Global Request Number)</td>' +
-                  '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 10px; word-break:break-all;">' + (caseGrn || '-') + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">CDN Cache Status</td>' +
-                  '<td style="color:#34d399; font-weight:bold; font-family:monospace; padding:5px 10px;">' + cdnCache + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Cache-Control</td>' +
-                  '<td style="color:#f8fafc; font-family:monospace; padding:5px 10px;">' + cacheControl + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Idade do Objeto (Age)</td>' +
-                  '<td style="color:#f8fafc; font-family:monospace; padding:5px 10px;">' + age + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Expiração (Expires)</td>' +
-                  '<td style="color:#f8fafc; font-family:monospace; padding:5px 10px;">' + expires + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">ETag (Hash de Integridade)</td>' +
-                  '<td style="color:#94a3b8; font-family:monospace; padding:5px 10px; word-break:break-all;">' + etag + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Last-Modified</td>' +
-                  '<td style="color:#94a3b8; font-family:monospace; padding:5px 10px;">' + lastModified + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Data Servidor HTTP (Date)</td>' +
-                  '<td style="color:#94a3b8; font-family:monospace; padding:5px 10px;">' + dateHttp + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Servidor / Camada Web</td>' +
-                  '<td style="color:#94a3b8; font-family:monospace; padding:5px 10px;">' + webServer + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">S3 / Request ID</td>' +
-                  '<td style="color:#64748b; font-family:monospace; padding:5px 10px; word-break:break-all;">' + amzRequestId + '</td>' +
-                '</tr>' +
-                '<tr style="border-bottom:1px solid #334155;">' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">URL da Requisição</td>' +
-                  '<td style="color:#38bdf8; font-family:monospace; padding:5px 10px; word-break:break-all;"><a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a></td>' +
-                '</tr>' +
-                '<tr>' +
-                  '<td style="color:#94a3b8; padding:5px 10px;">Arquivo Raw em Disco</td>' +
-                  '<td style="color:#64748b; font-family:monospace; padding:5px 10px; word-break:break-all;">' + rawPath + '</td>' +
-                '</tr>' +
-              '</tbody>' +
-            '</table>' +
           '</div>' +
         '</div>';
       }
@@ -5590,19 +5608,291 @@ function setElText(id, val) {
         '</div>';
       }
       container.innerHTML = html;
+
+      // Se houver itens na tela, auto-seleciona a ocorrência corrente ou o primeiro item
+      if (displayItems.length > 0) {
+        const exists = selectedRegressionId && displayItems.some(function(item) { return item.id === selectedRegressionId; });
+        const targetId = exists ? selectedRegressionId : displayItems[0].id;
+        selectRegressionForDetails(targetId);
+      } else {
+        selectedRegressionId = null;
+        const panelContent = document.getElementById('techPanelContent');
+        const badge = document.getElementById('techPanelSelectedBadge');
+        if (badge) badge.textContent = 'Nenhum selecionado';
+        if (panelContent) {
+          panelContent.innerHTML = '<div style="text-align:center; padding:60px 20px; color:#64748b;">Nenhuma ocorrência para exibir metadados.</div>';
+        }
+      }
     }
 
-    function toggleEvidenceDetails(id) {
-      const el = document.getElementById('techDetails_' + id);
-      const btn = document.getElementById('btnToggle_' + id);
-      if (!el || !btn) return;
-      if (el.style.display === 'none') {
-        el.style.display = 'block';
-        btn.textContent = '➖ Ocultar Detalhes';
-      } else {
-        el.style.display = 'none';
-        btn.textContent = '➕ Detalhes Técnicos';
+    let selectedRegressionId = null;
+
+    function selectRegressionForDetails(id) {
+      selectedRegressionId = id;
+      const r = allRegressoesData.find(function(item) { return item.id === id; });
+      if (!r) return;
+
+      // Destaca o card selecionado na coluna esquerda
+      const allCards = document.querySelectorAll('.regression-card');
+      allCards.forEach(function(card) {
+        card.style.borderColor = 'rgba(239,68,68,0.35)';
+        card.style.background = '#0f172a';
+        card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+      });
+
+      const selectedCard = document.getElementById('regCard_' + id);
+      if (selectedCard) {
+        selectedCard.style.borderColor = '#38bdf8';
+        selectedCard.style.background = '#132338';
+        selectedCard.style.boxShadow = '0 0 16px rgba(56,189,248,0.25)';
       }
+
+      // Atualiza botões "Inspecionar"
+      const allInspectBtns = document.querySelectorAll('[id^="btnInspect_"]');
+      allInspectBtns.forEach(function(btn) {
+        btn.textContent = '🌐 Inspecionar Painel 👉';
+        btn.style.background = '#1e293b';
+        btn.style.borderColor = '#38bdf8';
+        btn.style.color = '#38bdf8';
+      });
+      const currentInspectBtn = document.getElementById('btnInspect_' + id);
+      if (currentInspectBtn) {
+        currentInspectBtn.textContent = '🔍 INSPECIONANDO ATIVO';
+        currentInspectBtn.style.background = '#0284c7';
+        currentInspectBtn.style.borderColor = '#38bdf8';
+        currentInspectBtn.style.color = '#ffffff';
+      }
+
+      // Atualiza o badge do painel direito
+      const badge = document.getElementById('techPanelSelectedBadge');
+      if (badge) {
+        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | ' + escapeHtml(r.arquivo);
+      }
+
+      // Renderiza os detalhes técnicos no painel direito
+      renderTechDetailsInPanel(r);
+    }
+
+    function renderTechDetailsInPanel(r) {
+      const panelContent = document.getElementById('techPanelContent');
+      if (!panelContent) return;
+
+      const rawHeaders = (r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers || {};
+      const rawReqHeaders = (r.rawMeta && r.rawMeta.request_headers) || r.request_headers || {};
+      const serverIp = rawHeaders['x-server-ip'] || (r.rawMeta && r.rawMeta.serverIp) || (r.server_ip) || '-';
+      const cdnCache = rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
+      const cacheControl = rawHeaders['cache-control'] || '-';
+      const expires = rawHeaders['expires'] || '-';
+      const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
+      const etag = rawHeaders['etag'] || '-';
+      const lastModified = rawHeaders['last-modified'] || '-';
+      const dateHttp = rawHeaders['date'] || '-';
+      const webServer = rawHeaders['server'] || (r.servidor === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
+      const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
+      const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
+      const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
+      const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+      const rawPath = r.evidencia_raw_path ? r.evidencia_raw_path : '(salvo no buffer SQLite)';
+
+      let reqHeadersRowsHtml = '';
+      const reqEntries = Object.entries(rawReqHeaders);
+      if (reqEntries.length > 0) {
+        for (let j = 0; j < reqEntries.length; j++) {
+          const k = reqEntries[j][0];
+          const v = reqEntries[j][1];
+          const lk = k.toLowerCase();
+          const isCacheHdr = ['cache-control', 'pragma', 'if-modified-since', 'if-none-match'].includes(lk);
+          reqHeadersRowsHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            '<td style="padding:5px 8px; color:' + (isCacheHdr ? '#38bdf8; font-weight:700;' : '#94a3b8;') + '; font-family:monospace; width:200px;">' +
+              (isCacheHdr ? '<span style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CACHE</span>' : '') +
+              escapeHtml(k) +
+            '</td>' +
+            '<td style="padding:5px 8px; color:' + (isCacheHdr ? '#f8fafc; font-weight:600;' : '#cbd5e1;') + '; font-family:monospace; word-break:break-all;">' +
+              escapeHtml(String(v)) +
+            '</td>' +
+          '</tr>';
+        }
+      } else {
+        reqHeadersRowsHtml = '<tr><td colspan="2" style="padding:6px 8px; color:#64748b; font-style:italic;">Cabeçalhos de solicitação padrão aplicados (User-Agent, Cache-Control: no-cache, Pragma: no-cache).</td></tr>';
+      }
+
+      let respHeadersRowsHtml = '';
+      const respEntries = Object.entries(rawHeaders);
+      if (respEntries.length > 0) {
+        for (let j = 0; j < respEntries.length; j++) {
+          const k = respEntries[j][0];
+          const v = respEntries[j][1];
+          const lk = k.toLowerCase();
+          const isCacheHdr = ['cache-control', 'pragma', 'expires', 'age', 'etag', 'last-modified', 'date', 'vary'].includes(lk);
+          const isCdnHdr = ['akamai-grn', 'x-akamai-grn', 'cdn-cache-status', 'x-cache', 'x-cache-lookup', 'x-cache-hits', 'x-check-cacheable', 'x-true-cache-key', 'x-cache-key', 'server-timing'].includes(lk);
+          const isIpOrServer = ['x-server-ip', 'server'].includes(lk);
+
+          let tagBadge = '';
+          let valColor = '#cbd5e1';
+          let keyColor = '#94a3b8';
+
+          if (isCacheHdr) {
+            tagBadge = '<span style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CACHE</span>';
+            keyColor = '#34d399';
+            valColor = '#f8fafc; font-weight:bold';
+          } else if (isCdnHdr) {
+            tagBadge = '<span style="background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">CDN</span>';
+            keyColor = '#c084fc';
+            valColor = '#f8fafc; font-weight:bold';
+          } else if (isIpOrServer) {
+            tagBadge = '<span style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); padding:1px 4px; border-radius:3px; font-size:0.62rem; margin-right:4px; font-weight:bold;">REDE</span>';
+            keyColor = '#38bdf8';
+            valColor = '#f8fafc';
+          }
+
+          respHeadersRowsHtml += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            '<td style="padding:5px 8px; color:' + keyColor + '; font-family:monospace; width:200px;">' +
+              tagBadge + escapeHtml(k) +
+            '</td>' +
+            '<td style="padding:5px 8px; color:' + valColor + '; font-family:monospace; word-break:break-all;">' +
+              escapeHtml(String(v)) +
+            '</td>' +
+          '</tr>';
+        }
+      } else {
+        respHeadersRowsHtml = '<tr><td colspan="2" style="padding:6px 8px; color:#64748b; font-style:italic;">Nenhum cabeçalho de resposta registrado.</td></tr>';
+      }
+
+      panelContent.innerHTML = 
+        // Banner de Identificação do Caso Selecionado
+        '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
+            '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
+            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (r.servidor === 'HMG' ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+          '</div>' +
+          '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
+        '</div>' +
+
+        // 1. METADADOS DE REDE E CONEXÃO
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📍</span> Metadados de Rede e Conexão:' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid #334155;">' +
+            '<tbody>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Instância / IP Borda (x-server-ip)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + serverIp + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Akamai-GRN</td>' +
+                '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 8px; word-break:break-all;">' + (caseGrn || '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Instante de Disparo (T_call)</td>' +
+                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (r.call_time_iso || r.timestamp_iso) + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Latência de Rede (RTT)</td>' +
+                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Camada Web (Server)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + webServer + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">URL da Requisição</td>' +
+                '<td style="color:#38bdf8; font-family:monospace; padding:5px 8px; word-break:break-all;"><a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a></td>' +
+              '</tr>' +
+              '<tr>' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Arquivo Raw em Disco</td>' +
+                '<td style="color:#64748b; font-family:monospace; padding:5px 8px; word-break:break-all;">' + rawPath + '</td>' +
+              '</tr>' +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        // 2. DIRETIVAS DE CONTROLE DE CACHE & CDN
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#34d399; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>⚡</span> Diretivas e Headers de Controle de Cache (RFC 7234 & Akamai CDN):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(16,185,129,0.3);">' +
+            '<tbody>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Cache-Control (Resposta)</td>' +
+                '<td style="color:#f8fafc; font-weight:bold; font-family:monospace; padding:5px 8px;">' + cacheControl + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Cache-Control (Solicitação)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + reqCacheControl + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">CDN Cache Status</td>' +
+                '<td style="color:#34d399; font-weight:bold; font-family:monospace; padding:5px 8px;">' + cdnCache + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Idade em Cache (Age)</td>' +
+                '<td style="color:#f8fafc; font-family:monospace; padding:5px 8px;">' + age + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Expiração HTTP (Expires)</td>' +
+                '<td style="color:#f8fafc; font-family:monospace; padding:5px 8px;">' + expires + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Hash de Integridade (ETag)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px; word-break:break-all;">' + etag + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Última Modificação (Last-Modified)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + lastModified + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Data do Servidor HTTP (Date)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + dateHttp + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Diretiva Pragma</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + (rawHeaders['pragma'] || reqPragma || '-') + '</td>' +
+              '</tr>' +
+              '<tr>' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Diretiva de Variação (Vary)</td>' +
+                '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + (rawHeaders['vary'] || '-') + '</td>' +
+              '</tr>' +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        // 3. CABEÇALHOS DA SOLICITAÇÃO (REQUEST HEADERS)
+        '<div style="margin-bottom:14px;">' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#38bdf8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📤</span> Cabeçalhos da Solicitação Enviada (HTTP Request Headers):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(56,189,248,0.25);">' +
+            '<thead>' +
+              '<tr style="background:#0f172a; border-bottom:1px solid #334155; text-align:left;">' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600; width:190px;">Header</th>' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600;">Valor Enviado</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+              reqHeadersRowsHtml +
+            '</tbody>' +
+          '</table>' +
+        '</div>' +
+
+        // 4. CABEÇALHOS DA RESPOSTA (RESPONSE HEADERS)
+        '<div>' +
+          '<div style="font-size:0.72rem; text-transform:uppercase; color:#c084fc; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
+            '<span>📥</span> Cabeçalhos da Resposta Recebida (HTTP Response Headers - Todos):' +
+          '</div>' +
+          '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid rgba(168,85,247,0.25);">' +
+            '<thead>' +
+              '<tr style="background:#0f172a; border-bottom:1px solid #334155; text-align:left;">' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600; width:190px;">Header</th>' +
+                '<th style="padding:5px 8px; color:#94a3b8; font-weight:600;">Valor Recebido</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' +
+              respHeadersRowsHtml +
+            '</tbody>' +
+          '</table>' +
+        '</div>';
     }
   </script>
 
@@ -6038,13 +6328,13 @@ function setElText(id, val) {
   </div>
 
   <!-- MODAL DE AUDITORIA FORENSE DE REGRESSÕES TEMPORAIS -->
-  <div id="regressoesModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
-    <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:96%; max-width:1150px; padding:22px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); color:#f8fafc; max-height:92vh; display:flex; flex-direction:column;">
+  <div id="regressoesModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
+    <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:98vw; max-width:1700px; height:94vh; max-height:94vh; padding:18px 22px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); color:#f8fafc; display:flex; flex-direction:column; overflow:hidden;">
       
       <!-- Cabeçalho da Modal -->
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:10px; flex-shrink:0;">
         <div>
-          <h3 style="margin:0; font-size:1.2rem; display:flex; align-items:center; gap:8px; color:#f87171;">
+          <h3 style="margin:0; font-size:1.25rem; display:flex; align-items:center; gap:8px; color:#f87171;">
             🚨 Dossiê Forense de Regressões Detectadas
           </h3>
           <div style="font-size:0.80rem; color:#94a3b8; margin-top:4px;">
@@ -6052,26 +6342,26 @@ function setElText(id, val) {
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
-          <button onclick="loadRegressoesData()" class="btn-copy" style="padding:4px 10px; font-size:0.75rem;" title="Recarregar dados">🔄 Atualizar</button>
-          <a href="/download/csv-regressoes" class="btn-copy" style="padding:4px 10px; font-size:0.75rem; text-decoration:none;" title="Baixar histórico CSV">📊 Baixar CSV</a>
-          <a href="/report" target="_blank" class="btn-copy" style="padding:4px 10px; font-size:0.75rem; text-decoration:none; background:#dc2626; color:#fff;" title="Dossiê HTML para impressão">📄 Dossiê HTML</a>
-          <button onclick="closeRegressoesModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.6rem; cursor:pointer; line-height:1; margin-left:6px;">&times;</button>
+          <button onclick="loadRegressoesData()" class="btn-copy" style="padding:5px 12px; font-size:0.75rem;" title="Recarregar dados">🔄 Atualizar</button>
+          <a href="/download/csv-regressoes" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none;" title="Baixar histórico CSV">📊 Baixar CSV</a>
+          <a href="/report" target="_blank" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#dc2626; color:#fff;" title="Dossiê HTML para impressão">📄 Dossiê HTML</a>
+          <button onclick="closeRegressoesModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.6rem; cursor:pointer; line-height:1; margin-left:8px;">&times;</button>
         </div>
       </div>
 
       <!-- Barra de Filtros Internos da Modal -->
-      <div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
-        <div style="flex:1; min-width:260px; display:flex; gap:6px;">
-          <input type="text" id="regSearchInput" placeholder="🔍 Buscar por ID (#26374), arquivo, UF, cargo, IP, GRN ou motivo..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="flex:1; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 12px; border-radius:6px; font-size:0.82rem; outline:none;" />
-          <button onclick="buscarRegressoesRemoto()" class="btn-copy" style="padding:6px 12px; font-size:0.80rem; background:#2563eb; color:#fff; border-radius:6px; white-space:nowrap; cursor:pointer;" title="Buscar no histórico do SQLite">🔍 Buscar</button>
+      <div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:8px 14px; margin-bottom:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; flex-shrink:0;">
+        <div style="flex:1; min-width:240px; display:flex; gap:6px;">
+          <input type="text" id="regSearchInput" placeholder="🔍 Buscar por ID (#26374), arquivo, UF, cargo, IP, GRN ou motivo..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="flex:1; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 10px; border-radius:6px; font-size:0.80rem; outline:none;" />
+          <button onclick="buscarRegressoesRemoto()" class="btn-copy" style="padding:5px 10px; font-size:0.78rem; background:#2563eb; color:#fff; border-radius:6px; white-space:nowrap; cursor:pointer;" title="Buscar no histórico do SQLite">🔍 Buscar</button>
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">GRN:</label>
-          <input type="text" id="regFilterGrn" placeholder="Filtrar por Akamai-GRN..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 10px; border-radius:6px; font-size:0.80rem; width:160px; outline:none;" />
+          <input type="text" id="regFilterGrn" placeholder="Filtrar por Akamai-GRN..." oninput="renderFilteredRegressoes(true)" onkeydown="if(event.key==='Enter') buscarRegressoesRemoto();" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem; width:150px; outline:none;" />
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Servidor:</label>
-          <select id="regFilterServer" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 10px; border-radius:6px; font-size:0.80rem;">
+          <select id="regFilterServer" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem;">
             <option value="">Todos os Servidores</option>
             <option value="SIM">SIM (Cache Akamai)</option>
             <option value="HMG">HMG (Fonte Oficial)</option>
@@ -6079,13 +6369,13 @@ function setElText(id, val) {
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">UF:</label>
-          <select id="regFilterUf" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 10px; border-radius:6px; font-size:0.80rem;">
+          <select id="regFilterUf" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem;">
             <option value="">Todas as UFs</option>
           </select>
         </div>
         <div style="display:flex; align-items:center; gap:6px;">
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
-          <select id="regFilterCriterion" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 10px; border-radius:6px; font-size:0.80rem;">
+          <select id="regFilterCriterion" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem;">
             <option value="">Todos os Critérios</option>
             <option value="TEMPO">DG/HG (Tempo Geração)</option>
             <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
@@ -6098,15 +6388,38 @@ function setElText(id, val) {
         </div>
       </div>
 
-      <!-- Feed / Lista com Scroll de Casos Forenses -->
-      <div id="regressoesListContainer" style="flex:1; overflow-y:auto; padding-right:6px; display:flex; flex-direction:column; gap:12px;">
-        <!-- Inserido dinamicamente via JS -->
+      <!-- CORPO DA MODAL: LAYOUT SPLIT EM 2 COLUNAS INDEPENDENTES -->
+      <div style="flex:1; min-height:0; display:flex; gap:16px; overflow:hidden;">
+        
+        <!-- Coluna Esquerda: Feed / Lista de Ocorrências com Scroll Independente -->
+        <div id="regressoesListContainer" style="flex:1.05; min-width:0; overflow-y:auto; padding-right:8px; display:flex; flex-direction:column; gap:12px;">
+          <!-- Inserido dinamicamente via JS -->
+        </div>
+
+        <!-- Coluna Direita: Painel Lateral Fixo com Detalhes Técnicos e Scroll Independente -->
+        <div id="regressoesTechPanel" style="flex:0.95; min-width:460px; max-width:720px; background:#0f172a; border:1px solid #334155; border-radius:10px; display:flex; flex-direction:column; overflow:hidden; box-shadow:inset 0 2px 8px rgba(0,0,0,0.3);">
+          <div style="background:#1e293b; padding:10px 14px; border-bottom:1px solid #334155; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+            <div style="font-size:0.85rem; font-weight:700; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+              <span>🌐</span> Painel Forense & Detalhes Técnicos
+            </div>
+            <div id="techPanelSelectedBadge" style="font-family:monospace; font-size:0.75rem; color:#94a3b8;">
+              Nenhum selecionado
+            </div>
+          </div>
+          <div id="techPanelContent" style="flex:1; min-height:0; overflow-y:auto; padding:14px; font-size:0.78rem;">
+            <div style="text-align:center; padding:60px 20px; color:#64748b;">
+              <div style="font-size:2rem; margin-bottom:8px;">👈</div>
+              <div>Selecione qualquer ocorrência na lista à esquerda para auditar aqui seus metadados de rede, cabeçalhos de solicitação, resposta e controle de cache.</div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- Rodapé da Modal -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; border-top:1px solid #334155; padding-top:10px; font-size:0.75rem; color:#64748b;">
-        <span>💡 Auditoria forense com captura instantânea de cabeçalhos HTTP, IP do nó de borda e assinatura de cache.</span>
-        <button onclick="closeRegressoesModal()" class="btn btn-outline" style="padding:6px 16px; font-size:0.82rem;">Fechar</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; border-top:1px solid #334155; padding-top:8px; font-size:0.75rem; color:#64748b; flex-shrink:0;">
+        <span>💡 Clique em qualquer ocorrência na coluna esquerda para fixar a inspeção técnica de cabeçalhos e rede no painel direito.</span>
+        <button onclick="closeRegressoesModal()" class="btn btn-outline" style="padding:5px 16px; font-size:0.82rem;">Fechar</button>
       </div>
 
     </div>
@@ -6958,11 +7271,11 @@ function getRawMetadataFast(filePath) {
           const cleanQ = q.replace(/^#/, '');
           const qNum = parseInt(cleanQ, 10);
           if (!isNaN(qNum) && String(qNum) === cleanQ) {
-            sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ?) ';
-            params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+            sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+            params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
           } else {
-            sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ?) ';
-            params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+            sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+            params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
           }
         } else if (!grnFilter) {
           sql += 'AND timestamp_iso >= ? ';
@@ -6970,8 +7283,8 @@ function getRawMetadataFast(filePath) {
         }
 
         if (grnFilter) {
-          sql += 'AND (akamai_grn LIKE ? OR headers_json LIKE ?) ';
-          params.push(`%${grnFilter}%`, `%${grnFilter}%`);
+          sql += 'AND (akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+          params.push(`%${grnFilter}%`, `%${grnFilter}%`, `%${grnFilter}%`);
         }
 
         if (serverFilter) {
@@ -6994,7 +7307,7 @@ function getRawMetadataFast(filePath) {
         const stmtTimelineRange = db.prepare(`
           SELECT 
             id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, evidencia_raw_path,
+            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
             call_time_iso, call_time_unix, latency_ms
           FROM leituras
           WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
@@ -7003,7 +7316,7 @@ function getRawMetadataFast(filePath) {
         const stmtTimelineFallback = db.prepare(`
           SELECT 
             id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, evidencia_raw_path,
+            idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
             call_time_iso, call_time_unix, latency_ms
           FROM leituras
           WHERE arquivo = ? AND timestamp_unix <= ?
@@ -7013,7 +7326,20 @@ function getRawMetadataFast(filePath) {
 
         const items = rows.map(r => {
           const rawMeta = getRawMetadataFast(r.evidencia_raw_path);
-          const rawHeaders = (rawMeta && rawMeta.headers) || {};
+          const rawHeaders = (rawMeta && (rawMeta.response_headers || rawMeta.headers)) || {};
+          let rawReqHeaders = (rawMeta && rawMeta.request_headers) || {};
+          if (Object.keys(rawReqHeaders).length === 0 && r.request_headers_json) {
+            try { rawReqHeaders = JSON.parse(r.request_headers_json); } catch(e) {}
+          }
+          if (Object.keys(rawReqHeaders).length === 0) {
+            rawReqHeaders = {
+              'cache-control': 'no-cache, no-store, must-revalidate',
+              'pragma': 'no-cache',
+              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+              'accept': 'application/json, text/plain, */*'
+            };
+          }
+          const cacheSummary = (rawMeta && rawMeta.cache_control_headers) || null;
           const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
 
           const regUnix = new Date(r.timestamp_iso).getTime();
@@ -7027,8 +7353,16 @@ function getRawMetadataFast(filePath) {
           // Enriquece cada ponto da linha do tempo com headers essenciais (compacto para alto desempenho)
           const enrichedTimeline = timeline.map(t => {
             let tHeaders = {};
+            let tReqHeaders = {};
             if (t.headers_json) {
-              try { tHeaders = JSON.parse(t.headers_json); } catch(e) {}
+              try {
+                const parsed = JSON.parse(t.headers_json);
+                tHeaders = parsed.response ? parsed.response : parsed;
+                if (parsed.request) tReqHeaders = parsed.request;
+              } catch(e) {}
+            }
+            if (t.request_headers_json) {
+              try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
             }
             const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
             const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
@@ -7071,6 +7405,9 @@ function getRawMetadataFast(filePath) {
             akamai_grn: itemAkamaiGrn,
             fileMeta: parseFileMetadata(r.arquivo),
             rawMeta,
+            request_headers: rawReqHeaders,
+            response_headers: rawHeaders,
+            cache_control_headers: cacheSummary,
             timeline: enrichedTimeline
           };
         });
