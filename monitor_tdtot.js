@@ -53,6 +53,40 @@ function getTodayMidnightUnix() {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime();
 }
 
+function syncRodadasChain() {
+  try {
+    const rodadas = db.prepare('SELECT id, inicio_unix FROM rodadas ORDER BY inicio_unix ASC, id ASC').all();
+    const updateFim = db.prepare('UPDATE rodadas SET fim_unix = ?, fim_iso = ? WHERE id = ?');
+    for (let i = 0; i < rodadas.length; i++) {
+      const cur = rodadas[i];
+      const next = rodadas[i + 1];
+      if (next) {
+        const fimUnix = next.inicio_unix;
+        const fimIso = new Date(fimUnix).toISOString();
+        updateFim.run(fimUnix, fimIso, cur.id);
+      } else {
+        db.prepare('UPDATE rodadas SET fim_unix = NULL, fim_iso = NULL WHERE id = ?').run(cur.id);
+      }
+    }
+  } catch (err) {
+    console.error('Erro ao sincronizar cadeia de rodadas:', err.message);
+  }
+}
+
+function findRodadaForTimestamp(timestampUnix) {
+  try {
+    const t = Number(timestampUnix);
+    const r = db.prepare(`
+      SELECT * FROM rodadas 
+      WHERE inicio_unix <= ? AND (fim_unix IS NULL OR fim_unix > ?)
+      ORDER BY inicio_unix DESC LIMIT 1
+    `).get(t, t);
+    return r || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function initRodadas() {
   try {
     let row = db.prepare('SELECT * FROM rodadas WHERE ativo = 1 ORDER BY id DESC LIMIT 1').get();
@@ -81,6 +115,7 @@ function initRodadas() {
       console.log(`📍 [RODADA ATIVA CARREGADA] ID=${row.id} "${row.nome}" (Início: ${new Date(row.inicio_unix).toLocaleTimeString('pt-BR')})`);
     }
     currentActiveRodada = row;
+    syncRodadasChain();
   } catch (err) {
     console.error('Erro ao inicializar rodadas:', err.message);
   }
@@ -116,6 +151,7 @@ function createNewRodada(customName, customInicioUnix = null) {
   const stmt = db.prepare('INSERT INTO rodadas (nome, inicio_iso, inicio_unix, ativo) VALUES (?, ?, ?, 1)');
   const res = stmt.run(nome, inicioIso, inicioUnix);
   currentActiveRodada = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(res.lastInsertRowid);
+  syncRodadasChain();
 
   cachedTodaySync = null;
   clearServerStates();
@@ -132,11 +168,7 @@ function updateRodada(id, nome, inicioUnix) {
   db.prepare('UPDATE rodadas SET nome = ?, inicio_iso = ?, inicio_unix = ? WHERE id = ?')
     .run(nome, inicioIso, inicioUnix, numId);
 
-  // Mantém coerência do fim da rodada anterior se existir
-  const prev = db.prepare('SELECT id FROM rodadas WHERE id < ? ORDER BY id DESC LIMIT 1').get(numId);
-  if (prev) {
-    db.prepare('UPDATE rodadas SET fim_iso = ?, fim_unix = ? WHERE id = ?').run(inicioIso, inicioUnix, prev.id);
-  }
+  syncRodadasChain();
 
   if (currentActiveRodada && currentActiveRodada.id === numId) {
     currentActiveRodada = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(numId);
@@ -150,6 +182,7 @@ function updateRodada(id, nome, inicioUnix) {
 
 function deleteRodada(id) {
   db.prepare('DELETE FROM rodadas WHERE id = ?').run(id);
+  syncRodadasChain();
   if (currentActiveRodada && currentActiveRodada.id === Number(id)) {
     currentActiveRodada = null;
     initRodadas();
@@ -404,8 +437,18 @@ function hydrateStateFromDb() {
   try {
     const rodada = getActiveRodada();
     const rodadaInicio = rodada ? rodada.inicio_unix : 0;
+    const rodadaFim = rodada && rodada.fim_unix ? rodada.fim_unix : null;
+    clearServerStates();
 
-    const rows = db.prepare(`
+    const sqlHydrate = rodadaFim ? `
+      SELECT l.* FROM leituras l
+      INNER JOIN (
+        SELECT servidor, arquivo, MAX(id) as max_id
+        FROM leituras
+        WHERE timestamp_unix >= ? AND timestamp_unix < ?
+        GROUP BY servidor, arquivo
+      ) latest ON l.id = latest.max_id
+    ` : `
       SELECT l.* FROM leituras l
       INNER JOIN (
         SELECT servidor, arquivo, MAX(id) as max_id
@@ -413,7 +456,11 @@ function hydrateStateFromDb() {
         WHERE timestamp_unix >= ?
         GROUP BY servidor, arquivo
       ) latest ON l.id = latest.max_id
-    `).all(rodadaInicio);
+    `;
+
+    const rows = rodadaFim 
+      ? db.prepare(sqlHydrate).all(rodadaInicio, rodadaFim)
+      : db.prepare(sqlHydrate).all(rodadaInicio);
 
     for (const r of rows) {
       const serverKey = r.servidor;
@@ -421,6 +468,7 @@ function hydrateStateFromDb() {
         serverStates[serverKey] = new Map();
       }
       serverStates[serverKey].set(r.arquivo, {
+        rodadaId: rodada ? rodada.id : null,
         timestampIso: r.call_time_iso || r.timestamp_iso,
         timestampUnix: r.call_time_unix || r.timestamp_unix,
         callTimeIso: r.call_time_iso || r.timestamp_iso,
@@ -3687,17 +3735,31 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     ts,
     vTot,
     etag,
-    source
+    source,
+    rodadaId: null
   };
+
+  const activeRodada = getActiveRodada();
+  if (activeRodada) {
+    currentMeta.rodadaId = activeRodada.id;
+  }
 
   const prev = serverStates[serverKey].get(relPath);
 
-  if (!prev) {
+  // Isolamento estrito por rodada: se não há estado anterior ou se o estado anterior
+  // pertence a outra rodada ou foi registrado antes do início da rodada ativa,
+  // esta primeira leitura é a VERSÃO INICIAL (baseline v1) da rodada atual.
+  const prevOutOfRodada = prev && (
+    (activeRodada && (prev.callTimeUnix || prev.timestampUnix || 0) < activeRodada.inicio_unix) ||
+    (prev.rodadaId && activeRodada && prev.rodadaId !== activeRodada.id)
+  );
+
+  if (!prev || prevOutOfRodada) {
     currentMeta.status = 'INICIAL';
-    currentMeta.details = 'Versão inicial';
+    currentMeta.details = prevOutOfRodada ? 'Versão inicial (novo ciclo de rodada)' : 'Versão inicial';
     serverStates[serverKey].set(relPath, currentMeta);
     recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'INICIAL');
-    console.log(`[${localTime}] ${CYAN}[${serverKey} (${SERVERS[serverKey]?.role})]${RESET} ${BOLD}${filename}${RESET}: Leitura inicial -> dg=${dg} hg=${hg} | idg=${idg || 'N/A'}`);
+    console.log(`[${localTime}] ${CYAN}[${serverKey} (${SERVERS[serverKey]?.role})]${RESET} ${BOLD}${filename}${RESET}: Leitura inicial${prevOutOfRodada ? ' [Nova Rodada]' : ''} -> dg=${dg} hg=${hg} | idg=${idg || 'N/A'}`);
     logComparisonRow(relPath);
     return;
   }
@@ -8149,7 +8211,13 @@ function getComparisonPayload() {
 
 function getEnrichedRegressions(filters = {}) {
   const activeRodada = getActiveRodada();
-  const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
+  let targetRodada = activeRodada;
+  if (filters.rodadaId && filters.rodadaId !== 'all') {
+    const rFound = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(Number(filters.rodadaId));
+    if (rFound) targetRodada = rFound;
+  }
+  const rodadaStartIso = targetRodada ? targetRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
+  const rodadaEndIso = targetRodada && targetRodada.fim_iso ? targetRodada.fim_iso : null;
   
   const limit = filters.limit !== undefined ? filters.limit : 2000;
   const q = (filters.q || '').trim();
@@ -8173,9 +8241,13 @@ function getEnrichedRegressions(filters = {}) {
       sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
       params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
     }
-  } else if (!grnFilter && !filters.allRodada && criterionFilter !== 'INVERSAO_DG_DT_ST') {
+  } else if (!grnFilter && !filters.allRodada) {
     sql += 'AND timestamp_iso >= ? ';
     params.push(rodadaStartIso);
+    if (rodadaEndIso) {
+      sql += 'AND timestamp_iso <= ? ';
+      params.push(rodadaEndIso);
+    }
   }
 
   if (grnFilter) {
@@ -8234,7 +8306,7 @@ function getEnrichedRegressions(filters = {}) {
       idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
       call_time_iso, call_time_unix, latency_ms
     FROM leituras
-    WHERE arquivo = ? AND timestamp_unix <= ?
+    WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
     ORDER BY timestamp_unix DESC
     LIMIT 8
   `);
@@ -8272,10 +8344,17 @@ function getEnrichedRegressions(filters = {}) {
     const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
 
     const regUnix = new Date(r.timestamp_iso).getTime();
-    let timeline = stmtTimelineRange.all(r.arquivo, regUnix - 900000, regUnix + 120000);
+    const rRodada = findRodadaForTimestamp(regUnix);
+    const rodadaMinUnix = rRodada ? rRodada.inicio_unix : 0;
+    const rodadaMaxUnix = (rRodada && rRodada.fim_unix) ? rRodada.fim_unix : (regUnix + 120000);
+
+    const rangeStart = Math.max(regUnix - 900000, rodadaMinUnix);
+    const rangeEnd = Math.min(regUnix + 120000, rodadaMaxUnix);
+
+    let timeline = stmtTimelineRange.all(r.arquivo, rangeStart, rangeEnd);
 
     if (timeline.length < 3) {
-      timeline = stmtTimelineFallback.all(r.arquivo, regUnix + 30000).reverse();
+      timeline = stmtTimelineFallback.all(r.arquivo, rodadaMinUnix, rangeEnd).reverse();
     }
 
     const enrichedTimeline = timeline.map(t => {
@@ -8339,10 +8418,17 @@ function getEnrichedRegressions(filters = {}) {
     };
   });
 
-  const countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?').get(rodadaStartIso);
+  let countRow;
+  if (filters.allRodada) {
+    countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes').get();
+  } else if (rodadaEndIso) {
+    countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ? AND timestamp_iso <= ?').get(rodadaStartIso, rodadaEndIso);
+  } else {
+    countRow = db.prepare('SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?').get(rodadaStartIso);
+  }
 
   return {
-    rodada: activeRodada,
+    rodada: targetRodada || activeRodada,
     total: countRow ? countRow.cnt : items.length,
     regressoes: items
   };
@@ -8920,10 +9006,13 @@ function startDashboardServer() {
         const cargo = (url.searchParams.get('cargo') || '').trim();
         const eleicao = (url.searchParams.get('eleicao') || '').trim();
 
-        const allRodada = url.searchParams.get('all') === '1' || url.searchParams.get('allRodada') === '1';
+        const rodadaIdParam = url.searchParams.get('rodadaId');
+        const rodadaId = (rodadaIdParam && rodadaIdParam !== 'all') ? rodadaIdParam : null;
+        const allRodada = rodadaIdParam === 'all' || url.searchParams.get('all') === '1' || url.searchParams.get('allRodada') === '1';
         const payload = getEnrichedRegressions({
           limit,
           allRodada,
+          rodadaId,
           q,
           grn,
           servidor,
