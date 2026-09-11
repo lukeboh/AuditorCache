@@ -1208,6 +1208,15 @@ function generateHtmlReport(embeddedData = null) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dossiê de Auditoria: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
+  <script>
+    (function() {
+      try {
+        if (localStorage.getItem('tdtot_theme') === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch(e) {}
+    })();
+  </script>
   <style>
     :root {
       --bg: #0b132b;
@@ -1221,6 +1230,74 @@ function generateHtmlReport(embeddedData = null) {
       --accent-yellow: #f59e0b;
       --accent-purple: #a855f7;
       --accent-pink: #ec4899;
+    }
+    html[data-theme="light"] {
+      --bg: #f1f5f9;
+      --card-bg: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --accent-green: #059669;
+      --accent-red: #dc2626;
+      --accent-blue: #0284c7;
+      --accent-yellow: #d97706;
+      --accent-purple: #7c3aed;
+      --accent-pink: #db2777;
+    }
+    html[data-theme="light"] body { background: var(--bg); color: var(--text); }
+    html[data-theme="light"] h1, html[data-theme="light"] h2, html[data-theme="light"] h3, html[data-theme="light"] .card-title { color: #0f172a !important; }
+    html[data-theme="light"] .stat-card { background: #ffffff; border-color: #cbd5e1; }
+    html[data-theme="light"] .card { background: #ffffff; border-color: #cbd5e1; }
+    html[data-theme="light"] .filter-panel { background: #f8fafc; border-color: #cbd5e1; }
+    html[data-theme="light"] .filter-label { color: #475569; }
+    html[data-theme="light"] .filter-select, html[data-theme="light"] .search-input { background: #ffffff !important; color: #0f172a !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .filter-select:focus, html[data-theme="light"] .search-input:focus { border-color: #0284c7 !important; }
+    html[data-theme="light"] .filter-select option { background: #ffffff; color: #0f172a; }
+    html[data-theme="light"] .btn-outline { color: #334155 !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .btn-outline:hover { background: #e2e8f0 !important; color: #0f172a !important; }
+    html[data-theme="light"] .btn-reset { background: #e2e8f0; color: #1e293b; border: 1px solid #cbd5e1; }
+    html[data-theme="light"] .btn-reset:hover { background: #cbd5e1; }
+    html[data-theme="light"] .btn-copy { background: #e2e8f0; color: #1e293b; border-color: #cbd5e1; }
+    html[data-theme="light"] .btn-copy:hover { background: #cbd5e1; }
+    html[data-theme="light"] th { background: #f8fafc; color: #475569; border-bottom: 1px solid #cbd5e1; }
+    html[data-theme="light"] th.sortable:hover { background: #e0f2fe; color: #0369a1; }
+    html[data-theme="light"] td { border-bottom: 1px solid #e2e8f0; color: #1e293b; }
+    html[data-theme="light"] tr:hover { background: #f8fafc; }
+    html[data-theme="light"] .tab-btn { color: #64748b; }
+    html[data-theme="light"] .tab-btn:hover { color: #0f172a; background: #e2e8f0; }
+    html[data-theme="light"] .tab-btn.active { color: #0284c7; background: #e0f2fe; border-color: #bae6fd; }
+    html[data-theme="light"] .regression-card { background: #ffffff !important; border-color: rgba(239, 68, 68, 0.3) !important; box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important; color: #0f172a !important; }
+    html[data-theme="light"] .regression-card:hover { border-color: #ef4444 !important; }
+    html[data-theme="light"] .modal-content { background: #ffffff; border-color: #cbd5e1; color: #0f172a; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.15); }
+    html[data-theme="light"] .modal-header { border-bottom-color: #e2e8f0; }
+    html[data-theme="light"] .modal-header h3 { color: #0f172a; }
+    html[data-theme="light"] .modal-footer { border-top-color: #e2e8f0; background: #f8fafc; }
+    html[data-theme="light"] #colSelectorDropdown { background: #ffffff !important; border-color: #cbd5e1 !important; box-shadow: 0 12px 32px rgba(0,0,0,0.15) !important; color: #0f172a !important; }
+    html[data-theme="light"] #colSelectorDropdown strong { color: #0f172a !important; }
+    html[data-theme="light"] #dossieTechPanel { background: #ffffff !important; border-color: #cbd5e1 !important; box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important; }
+    html[data-theme="light"] #dossieTechPanel > div:first-child { background: #f8fafc !important; border-bottom-color: #e2e8f0 !important; }
+    html[data-theme="light"] #dossieTechPanelContent td { border-bottom-color: #e2e8f0 !important; color: #1e293b !important; }
+    html[data-theme="light"] #dossieTechPanelContent tr { border-bottom-color: #e2e8f0 !important; }
+    html[data-theme="light"] #dossieTechPanelContent div[style*="background:#1e293b"] { background: #f8fafc !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] #dossieTechPanelContent table { background: #ffffff !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .timeline-box { background: #f8fafc !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .timeline-step-normal { background: #ffffff !important; border-color: #e2e8f0 !important; }
+    html[data-theme="light"] .timeline-step-normal strong { color: #0f172a !important; }
+    html[data-theme="light"] .timeline-step-normal span { color: #475569 !important; }
+    html[data-theme="light"] div[style*="background:#0b132b"] { background: #f8fafc !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] div[style*="background:rgba(15,23,42,0.6)"] { background: #ffffff !important; border-color: #e2e8f0 !important; }
+    html[data-theme="light"] div[style*="background:rgba(15,23,42,0.6)"] strong { color: #0f172a !important; }
+    html[data-theme="light"] div[style*="background:rgba(15,23,42,0.6)"] span { color: #475569 !important; }
+    html[data-theme="light"] .code,
+    html[data-theme="light"] div[style*="color:#f8fafc"],
+    html[data-theme="light"] div[style*="color: #f8fafc"],
+    html[data-theme="light"] strong[style*="color:#f8fafc"],
+    html[data-theme="light"] strong[style*="color: #f8fafc"],
+    html[data-theme="light"] span[style*="color:#f8fafc"],
+    html[data-theme="light"] span[style*="color: #f8fafc"],
+    html[data-theme="light"] .filter-header strong,
+    html[data-theme="light"] .filter-label span {
+      color: #0f172a !important;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: var(--bg); color: var(--text); padding: 24px; line-height: 1.5; }
@@ -1303,6 +1380,9 @@ function generateHtmlReport(embeddedData = null) {
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 10px;">
+      <button id="themeToggleBtn" onclick="toggleTheme()" class="btn btn-outline" style="padding: 6px 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border-radius: 6px;" title="Alternar entre modo escuro e claro">
+        ☀️ Modo Claro
+      </button>
       ${embeddedData ? `
       <div style="display: flex; align-items: center; gap: 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
         <span style="font-size: 0.9rem;">📦</span>
@@ -1629,6 +1709,38 @@ function generateHtmlReport(embeddedData = null) {
   </footer>
 
   <script>
+    // =====================================================================
+    // GERENCIADOR DE TEMAS (DARK / LIGHT)
+    // =====================================================================
+    var selectedDossieRegressionId = null;
+
+    function initTheme() {
+      const saved = localStorage.getItem('tdtot_theme') || 'dark';
+      applyTheme(saved);
+    }
+
+    function applyTheme(theme) {
+      const btn = document.getElementById('themeToggleBtn');
+      if (theme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+        if (btn) btn.innerHTML = '🌙 Modo Escuro';
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        if (btn) btn.innerHTML = '☀️ Modo Claro';
+      }
+      localStorage.setItem('tdtot_theme', theme);
+      if (typeof selectDossieRegression === 'function' && selectedDossieRegressionId) {
+        selectDossieRegression(selectedDossieRegressionId);
+      }
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      applyTheme(isLight ? 'dark' : 'light');
+    }
+
+    initTheme();
+
     // =====================================================================
     // SELETOR DINÂMICO DE COLUNAS (COMPARTILHADO COM O DASHBOARD)
     // =====================================================================
@@ -2398,7 +2510,7 @@ function generateHtmlReport(embeddedData = null) {
             '</div>' +
           '</td>' +
           '<td data-col="arquivo" style="min-width: 250px;">' +
-            '<div class="code" style="font-weight:bold; color:#f8fafc; font-size:0.82rem; margin-bottom:4px; word-break:break-all;">' + row.relPath + '</div>' +
+            '<div class="code" style="font-weight:bold; color:var(--text); font-size:0.82rem; margin-bottom:4px; word-break:break-all;">' + row.relPath + '</div>' +
             '<div style="display:flex; gap:6px;">' +
               '<a href="' + row.hmgUrl + '" target="_blank" class="btn-copy" style="text-decoration:none; color:#c084fc;">↗ HMG</a>' +
               '<a href="' + row.simUrl + '" target="_blank" class="btn-copy" style="text-decoration:none; color:#38bdf8;">↗ SIM</a>' +
@@ -2453,7 +2565,7 @@ function generateHtmlReport(embeddedData = null) {
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    let selectedDossieRegressionId = null;
+    selectedDossieRegressionId = null;
     const expandedDossieCardIds = new Set();
 
     function toggleDossieCard(id, event) {
@@ -2649,7 +2761,7 @@ function generateHtmlReport(embeddedData = null) {
             versionLegendHtml += '</div>';
           }
 
-          timelineHtml += '<div style="margin-bottom:12px; background:#0b132b; border:1px solid #334155; border-radius:8px; padding:12px 14px;">' +
+          timelineHtml += '<div class="timeline-box" style="margin-bottom:12px; background:#0b132b; border:1px solid #334155; border-radius:8px; padding:12px 14px;">' +
             '<div style="margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px;">' +
               '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">' +
                 '<strong style="font-size:0.84rem; color:#38bdf8; display:flex; align-items:center; gap:6px;">' +
@@ -2670,6 +2782,7 @@ function generateHtmlReport(embeddedData = null) {
             const isReg = step.isRegressionPoint;
             const isOrigin = step.servidor === 'HMG';
             
+            const itemClass = isReg ? 'timeline-step-reg' : (isOrigin ? 'timeline-step-origin' : 'timeline-step-normal');
             const itemBg = isReg 
               ? 'background:rgba(239,68,68,0.14); border:1px solid #ef4444;' 
               : (isOrigin ? 'background:rgba(168,85,247,0.08); border:1px solid rgba(168,85,247,0.3);' : 'background:rgba(15,23,42,0.6); border:1px solid #1e293b;');
@@ -2698,7 +2811,7 @@ function generateHtmlReport(embeddedData = null) {
               escapeHtml(stepIdg) +
             '</span>') : '';
 
-            timelineHtml += '<div style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
+            timelineHtml += '<div class="' + itemClass + '" style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
               '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">' +
                 '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
                   '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;" title="Instante de envio da requisição (Disparo)">• ' + stepTime + '</strong>' +
@@ -2861,18 +2974,19 @@ function generateHtmlReport(embeddedData = null) {
       const r = rawRegressionsList.find(item => item.id === id);
       if (!r) return;
 
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
       const allCards = document.querySelectorAll('#dossieRegsListContainer .regression-card');
       allCards.forEach(function(card) {
         card.style.borderColor = 'rgba(239,68,68,0.35)';
-        card.style.background = '#0f172a';
-        card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+        card.style.background = isLight ? '#ffffff' : '#0f172a';
+        card.style.boxShadow = isLight ? '0 2px 8px rgba(0,0,0,0.06)' : '0 4px 12px rgba(0,0,0,0.25)';
       });
 
       const selectedCard = document.getElementById('dossieCard_' + id);
       if (selectedCard) {
-        selectedCard.style.borderColor = '#38bdf8';
-        selectedCard.style.background = '#132338';
-        selectedCard.style.boxShadow = '0 0 16px rgba(56,189,248,0.25)';
+        selectedCard.style.borderColor = '#0284c7';
+        selectedCard.style.background = isLight ? '#f0f9ff' : '#132338';
+        selectedCard.style.boxShadow = isLight ? '0 0 16px rgba(2,132,199,0.25)' : '0 0 16px rgba(56,189,248,0.25)';
       }
 
       const allInspectBtns = document.querySelectorAll('[id^="btnDossieInspect_"]');
@@ -4299,6 +4413,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TDTot - Auditoria Dupla de Propagação: Data/Hora (DG/HG) e Sequencial (IDG)</title>
+  <script>
+    (function() {
+      try {
+        if (localStorage.getItem('tdtot_theme') === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch(e) {}
+    })();
+  </script>
   <style>
     :root {
       --bg: #0b132b;
@@ -4312,6 +4435,63 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       --accent-yellow: #f59e0b;
       --accent-purple: #a855f7;
       --accent-pink: #ec4899;
+    }
+    html[data-theme="light"] {
+      --bg: #f1f5f9;
+      --card-bg: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --accent-green: #059669;
+      --accent-red: #dc2626;
+      --accent-blue: #0284c7;
+      --accent-yellow: #d97706;
+      --accent-purple: #7c3aed;
+      --accent-pink: #db2777;
+    }
+    html[data-theme="light"] body { background: var(--bg); color: var(--text); }
+    html[data-theme="light"] h1, html[data-theme="light"] h2, html[data-theme="light"] h3, html[data-theme="light"] .card-title { color: #0f172a !important; }
+    html[data-theme="light"] .filter-card { background: #ffffff !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .filter-header { background: #f8fafc !important; color: #0f172a !important; }
+    html[data-theme="light"] .filter-header:hover { background: #f1f5f9 !important; }
+    html[data-theme="light"] .filter-body { border-top-color: #cbd5e1 !important; }
+    html[data-theme="light"] .filter-panel { background: #f8fafc !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .filter-label { color: #475569 !important; }
+    html[data-theme="light"] .filter-select, html[data-theme="light"] .search-input { background: #ffffff !important; color: #0f172a !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .filter-select:focus, html[data-theme="light"] .search-input:focus { border-color: #0284c7 !important; }
+    html[data-theme="light"] .filter-select option { background: #ffffff; color: #0f172a; }
+    html[data-theme="light"] .btn-outline { color: #334155 !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .btn-outline:hover { background: #e2e8f0 !important; color: #0f172a !important; }
+    html[data-theme="light"] .btn-reset { background: #e2e8f0 !important; color: #1e293b !important; border: 1px solid #cbd5e1 !important; }
+    html[data-theme="light"] .btn-reset:hover { background: #cbd5e1 !important; }
+    html[data-theme="light"] .btn-copy { background: #e2e8f0 !important; color: #1e293b !important; border-color: #cbd5e1 !important; }
+    html[data-theme="light"] .btn-copy:hover { background: #cbd5e1 !important; }
+    html[data-theme="light"] th { background: #f8fafc !important; color: #475569 !important; border-bottom: 1px solid #cbd5e1 !important; }
+    html[data-theme="light"] th.sortable:hover { background: #e0f2fe !important; color: #0369a1 !important; }
+    html[data-theme="light"] td { border-bottom: 1px solid #e2e8f0 !important; color: #1e293b !important; }
+    html[data-theme="light"] tr:hover { background: #f8fafc !important; }
+    html[data-theme="light"] .menu-content { background: #ffffff !important; border-color: #cbd5e1 !important; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.12) !important; }
+    html[data-theme="light"] .menu-content a { color: #1e293b !important; border-bottom: 1px solid #f1f5f9 !important; }
+    html[data-theme="light"] .menu-content a:hover { background: #f1f5f9 !important; color: #0284c7 !important; }
+    html[data-theme="light"] .modal-content { background: #ffffff !important; border-color: #cbd5e1 !important; color: #0f172a !important; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.15) !important; }
+    html[data-theme="light"] .modal-header { border-bottom-color: #e2e8f0 !important; }
+    html[data-theme="light"] .modal-header h3 { color: #0f172a !important; }
+    html[data-theme="light"] .modal-footer { border-top-color: #e2e8f0 !important; background: #f8fafc !important; }
+    html[data-theme="light"] .log-feed { background: #f8fafc !important; border-color: #cbd5e1 !important; color: #334155 !important; }
+    html[data-theme="light"] .log-row { border-bottom-color: #e2e8f0 !important; }
+    html[data-theme="light"] #headerRodadaName { color: #0f172a !important; }
+    html[data-theme="light"] #colSelectorDropdown { background: #ffffff !important; border-color: #cbd5e1 !important; box-shadow: 0 12px 32px rgba(0,0,0,0.15) !important; color: #0f172a !important; }
+    html[data-theme="light"] #colSelectorDropdown strong { color: #0f172a !important; }
+    html[data-theme="light"] .code,
+    html[data-theme="light"] div[style*="color:#f8fafc"],
+    html[data-theme="light"] div[style*="color: #f8fafc"],
+    html[data-theme="light"] strong[style*="color:#f8fafc"],
+    html[data-theme="light"] strong[style*="color: #f8fafc"],
+    html[data-theme="light"] span[style*="color:#f8fafc"],
+    html[data-theme="light"] span[style*="color: #f8fafc"],
+    html[data-theme="light"] .filter-header strong,
+    html[data-theme="light"] .filter-label span {
+      color: #0f172a !important;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background: var(--bg); color: var(--text); padding: 24px; }
@@ -4475,6 +4655,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
       <!-- BOTÕES DE EXPORTAÇÃO (Harmonizados na mesma altura de 30px) -->
       <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+        <button id="themeToggleBtn" onclick="toggleTheme()" class="btn btn-outline" style="height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.76rem; font-weight: 600; border-radius: 8px; border: 1px solid var(--border); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s;" title="Alternar entre modo escuro e modo claro">
+          ☀️ Modo Claro
+        </button>
         <button onclick="openZipModal()" class="btn" style="background: #0284c7; height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.76rem; font-weight: 600; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.4); display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s;" title="Baixar arquivos capturados em ZIP">
           📦 Baixar Versões (ZIP)
         </button>
@@ -4751,7 +4934,33 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 
   <script>
-    
+    // =====================================================================
+    // GERENCIADOR DE TEMAS (DARK / LIGHT)
+    // =====================================================================
+    function initTheme() {
+      const saved = localStorage.getItem('tdtot_theme') || 'dark';
+      applyTheme(saved);
+    }
+
+    function applyTheme(theme) {
+      const btn = document.getElementById('themeToggleBtn');
+      if (theme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+        if (btn) btn.innerHTML = '🌙 Modo Escuro';
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        if (btn) btn.innerHTML = '☀️ Modo Claro';
+      }
+      localStorage.setItem('tdtot_theme', theme);
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      applyTheme(isLight ? 'dark' : 'light');
+    }
+
+    initTheme();
+
     function toggleMenu() {
       const menu = document.getElementById('exportMenuDropdown');
       menu.classList.toggle('show');
@@ -5475,7 +5684,7 @@ function setElText(id, val) {
             </div>
           </td>
           <td data-col="arquivo" style="min-width: 280px;">
-            <div class="code" style="font-weight:700; color:#f8fafc; font-size:0.82rem; margin-bottom:6px; word-break:break-all;">\${row.relPath}</div>
+            <div class="code" style="font-weight:700; color:var(--text); font-size:0.82rem; margin-bottom:6px; word-break:break-all;">\${row.relPath}</div>
             <div style="display:flex; gap:5px; flex-wrap:wrap; align-items:center;">
               \${serverLinks}
               <button onclick="openMultiNodeModal('\${encodeURIComponent(row.relPath)}')" class="btn-copy" style="font-size:0.70rem; padding:2px 6px;">📋 Inspecionar Nós</button>
