@@ -63,10 +63,15 @@ function initRodadas() {
       const dateStr = now.toLocaleDateString('pt-BR');
       const nome = !row ? 'Rodada Inicial - ' + dateStr : 'Rodada do Dia - ' + dateStr;
       
-      db.prepare('UPDATE rodadas SET ativo = 0 WHERE ativo = 1').run();
-
-      const inicioUnix = Math.max(todayMidnight, now.getTime());
+      const inicioUnix = todayMidnight;
       const inicioIso = new Date(inicioUnix).toISOString();
+
+      if (row) {
+        db.prepare('UPDATE rodadas SET ativo = 0, fim_iso = ?, fim_unix = ? WHERE id = ?')
+          .run(inicioIso, inicioUnix, row.id);
+      } else {
+        db.prepare('UPDATE rodadas SET ativo = 0 WHERE ativo = 1').run();
+      }
 
       const stmt = db.prepare('INSERT INTO rodadas (nome, inicio_iso, inicio_unix, ativo) VALUES (?, ?, ?, 1)');
       const res = stmt.run(nome, inicioIso, inicioUnix);
@@ -78,6 +83,15 @@ function initRodadas() {
     currentActiveRodada = row;
   } catch (err) {
     console.error('Erro ao inicializar rodadas:', err.message);
+  }
+}
+
+function checkDayRollover() {
+  const active = currentActiveRodada;
+  const todayMidnight = getTodayMidnightUnix();
+  if (!active || active.inicio_unix < todayMidnight) {
+    console.log('\n🌙 [VIRADA DO DIA DETECTADA] Transição automática de rodada diária (00:00:00)...');
+    initRodadas();
   }
 }
 
@@ -113,15 +127,24 @@ function createNewRodada(customName, customInicioUnix = null) {
 }
 
 function updateRodada(id, nome, inicioUnix) {
+  const numId = Number(id);
   const inicioIso = new Date(inicioUnix).toISOString();
   db.prepare('UPDATE rodadas SET nome = ?, inicio_iso = ?, inicio_unix = ? WHERE id = ?')
-    .run(nome, inicioIso, inicioUnix, id);
-  if (currentActiveRodada && currentActiveRodada.id === Number(id)) {
-    currentActiveRodada = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(id);
+    .run(nome, inicioIso, inicioUnix, numId);
+
+  // Mantém coerência do fim da rodada anterior se existir
+  const prev = db.prepare('SELECT id FROM rodadas WHERE id < ? ORDER BY id DESC LIMIT 1').get(numId);
+  if (prev) {
+    db.prepare('UPDATE rodadas SET fim_iso = ?, fim_unix = ? WHERE id = ?').run(inicioIso, inicioUnix, prev.id);
+  }
+
+  if (currentActiveRodada && currentActiveRodada.id === numId) {
+    currentActiveRodada = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(numId);
     cachedTodaySync = null;
     clearServerStates();
     fileSyncTracker.clear();
     hydrateStateFromDb();
+    console.log(`✏️ [RODADA ATUALIZADA] ID=${numId} "${currentActiveRodada.nome}" novo marco: ${inicioIso} (${new Date(inicioUnix).toLocaleTimeString('pt-BR')})`);
   }
 }
 
@@ -1326,7 +1349,10 @@ function generateHtmlReport(embeddedData = null) {
       </div>
 
       <div class="filter-group">
-        <label class="filter-label">Rodada</label>
+        <label class="filter-label" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>Rodada</span>
+          <button type="button" onclick="openRodadasModal()" class="btn-copy" style="font-size:0.68rem; padding:1px 6px; cursor:pointer;" title="Gerenciar e Editar Parâmetros da Rodada">⚙️ Gerenciar</button>
+        </label>
         <select id="filterRodada" class="filter-select" onchange="applyFilters()">
           <option value="">Carregando rodadas...</option>
         </select>
@@ -1393,6 +1419,7 @@ function generateHtmlReport(embeddedData = null) {
         <select id="filterStatus" class="filter-select" onchange="applyFilters()">
           <option value="">Todos os Status</option>
           <option value="REG_ALL">🚨 Qualquer Regressão Detectada</option>
+          <option value="REG_INVERSAO">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
           <option value="REG_TIME">🚨 Regressão de Geração (DG/HG)</option>
           <option value="REG_TOT">🚨 Regressão de Totalização (DT/HT)</option>
           <option value="REG_ST">🚨 Regressão de Seções (ST)</option>
@@ -1502,6 +1529,7 @@ function generateHtmlReport(embeddedData = null) {
         <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
         <select id="dossieRegFilterCriterion" onchange="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem;">
           <option value="">Todos os Critérios</option>
+          <option value="INVERSAO_DG_DT_ST">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
           <option value="TEMPO">DG/HG (Tempo Geração)</option>
           <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
           <option value="SEÇÕES">ST (Seções Apuradas)</option>
@@ -1779,21 +1807,43 @@ function generateHtmlReport(embeddedData = null) {
     // =====================================================================
     // CARREGAMENTO DINÂMICO DOS DADOS
     // =====================================================================
+    let hasLoadedInversions = false;
     async function loadReportData() {
       try {
-        const [compRes, regsRes, rodadasRes] = await Promise.all([
+        const fetchPromises = [
           fetch('/api/comparison'),
-          fetch('/api/regressoes?limit=300'),
+          fetch('/api/regressoes?all=1&limit=2000'),
           fetch('/api/rodadas')
-        ]);
+        ];
+        if (!hasLoadedInversions) {
+          fetchPromises.push(fetch('/api/regressoes?criterio=INVERSAO_DG_DT_ST&limit=1000&all=1'));
+        }
 
-        const compData = await compRes.json();
-        const regsData = await regsRes.json();
-        const rodadasData = await rodadasRes.json();
+        const responses = await Promise.all(fetchPromises);
+        const compData = await responses[0].json();
+        const regsData = await responses[1].json();
+        const rodadasData = await responses[2].json();
+        let invData = null;
+        if (!hasLoadedInversions && responses[3]) {
+          invData = await responses[3].json();
+          hasLoadedInversions = true;
+        }
 
         latestApiData = compData;
         rawComparisonList = compData.comparison || [];
-        rawRegressionsList = regsData.regressoes || [];
+        
+        const regMap = new Map();
+        // Preserva inversões já carregadas nas atualizações periódicas
+        for (const r of rawRegressionsList) {
+          if (r.criterio?.includes('INVERSÃO') || r.motivo?.includes('INVERSÃO') || r.detalhes?.includes('INVERSÃO_DG_DT_ST')) {
+            regMap.set(r.id, r);
+          }
+        }
+        for (const r of (regsData.regressoes || [])) regMap.set(r.id, r);
+        if (invData && invData.regressoes) {
+          for (const r of invData.regressoes) regMap.set(r.id, r);
+        }
+        rawRegressionsList = Array.from(regMap.values());
         rawRodadasList = rodadasData.list || [];
         activeRodada = rodadasData.active || null;
 
@@ -1953,8 +2003,6 @@ function generateHtmlReport(embeddedData = null) {
       let rodadaObj = null;
       if (fRod) {
         rodadaObj = rawRodadasList.find(r => String(r.id) === String(fRod));
-      } else if (activeRodada) {
-        rodadaObj = activeRodada;
       }
 
       // Filtros internos específicos da Seção 2 (Dossiê)
@@ -1989,10 +2037,32 @@ function generateHtmlReport(embeddedData = null) {
         if (dCrit) {
           const c = (reg.criterio || '').toUpperCase();
           const m = (reg.motivo || '').toUpperCase();
-          if (!c.includes(dCrit) && !m.includes(dCrit)) return false;
+          const d = (reg.detalhes || '').toUpperCase();
+          if (dCrit === 'INVERSAO_DG_DT_ST') {
+            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+            const dgAdv = Boolean(reg.dg_anterior && reg.dg_recebido && reg.hg_anterior && reg.hg_recebido && (
+              reg.dg_recebido > reg.dg_anterior || (reg.dg_recebido === reg.dg_anterior && reg.hg_recebido >= reg.hg_anterior)
+            ));
+            const totReg = Boolean(reg.dt_recebido && reg.dt_anterior && (reg.dt_recebido < reg.dt_anterior || (reg.dt_recebido === reg.dt_anterior && reg.ht_recebido < reg.ht_anterior)));
+            const stReg = Boolean(reg.secoes_recebido !== null && reg.secoes_anterior !== null && Number(reg.secoes_recebido) < Number(reg.secoes_anterior));
+            if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+          } else {
+            if (!c.includes(dCrit) && !m.includes(dCrit)) return false;
+          }
         }
 
-        if (fStatus === 'REG_TIME') {
+        if (fStatus === 'REG_INVERSAO') {
+          const c = (reg.criterio || '').toUpperCase();
+          const m = (reg.motivo || '').toUpperCase();
+          const d = (reg.detalhes || '').toUpperCase();
+          const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+          const dgAdv = Boolean(reg.dg_anterior && reg.dg_recebido && reg.hg_anterior && reg.hg_recebido && (
+            reg.dg_recebido > reg.dg_anterior || (reg.dg_recebido === reg.dg_anterior && reg.hg_recebido >= reg.hg_anterior)
+          ));
+          const totReg = Boolean(reg.dt_recebido && reg.dt_anterior && (reg.dt_recebido < reg.dt_anterior || (reg.dt_recebido === reg.dt_anterior && reg.ht_recebido < reg.ht_anterior)));
+          const stReg = Boolean(reg.secoes_recebido !== null && reg.secoes_anterior !== null && Number(reg.secoes_recebido) < Number(reg.secoes_anterior));
+          if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+        } else if (fStatus === 'REG_TIME') {
           if (!reg.criterio?.includes('TEMPO') && !reg.motivo?.includes('TEMPORAL')) return false;
         } else if (fStatus === 'REG_TOT') {
           if (!reg.criterio?.includes('TOTALIZAÇÃO') && !reg.motivo?.includes('TOTALIZAÇÃO')) return false;
@@ -2041,6 +2111,11 @@ function generateHtmlReport(embeddedData = null) {
       
       const dossieCountEl = document.getElementById('dossieRegShowingCount');
       if (dossieCountEl) dossieCountEl.textContent = 'Exibindo ' + filteredRegs.length + ' de ' + rawRegressionsList.length;
+
+      const kpiRegsEl = document.getElementById('kpiRegs');
+      if (kpiRegsEl) kpiRegsEl.textContent = filteredRegs.length;
+      const tabRegsBadge = document.getElementById('tabRegsBadge');
+      if (tabRegsBadge) tabRegsBadge.textContent = filteredRegs.length;
 
       renderCompTable(sortCompData(filteredComp));
       renderRegsTable(sortRegsData(filteredRegs));
@@ -2259,7 +2334,7 @@ function generateHtmlReport(embeddedData = null) {
         // Cache TTL
         const cacheTtlCell = '<div style="display:flex; flex-direction:column; gap:2px; font-size:0.75rem;">' +
           '<div><span class="tag-pill tag-uf" style="font-size:0.65rem;">HMG</span><span style="font-family:monospace; color:#c084fc;">' + (row.hmg?.cacheControl || '(sem header)') + '</span></div>' +
-          '<div><span class="tag-pill tag-eleicao" style="font-size:0.65rem;">SIM</span><span style="font-family:monospace; color:#38bdf8; font-weight:bold;">' + (row.sim?.cacheControl || (row.sim?.maxAge !== null ? 'max-age=' + row.sim.maxAge : '-')) + '</span></div>' +
+          '<div><span class="tag-pill tag-eleicao" style="font-size:0.65rem;">SIM</span><span style="font-family:monospace; color:#38bdf8; font-weight:bold;">' + (row.sim?.cacheControl || (row.sim?.maxAge != null ? 'max-age=' + row.sim.maxAge : '-')) + '</span></div>' +
         '</div>';
 
         tr.innerHTML = 
@@ -2415,8 +2490,6 @@ function generateHtmlReport(embeddedData = null) {
           if (r.criterio.includes('SEÇÕES')) critBadges.push('<span class="badge badge-danger">ST SEÇÕES</span>');
           if (r.criterio.includes('SEQUENCIAL') || r.criterio.includes('IDG')) critBadges.push('<span class="badge badge-danger">IDG SEQUENCIAL</span>');
         }
-        if (critBadges.length === 0) critBadges.push('<span class="badge badge-danger">REGRESSÃO FORENSE</span>');
-        const critBadgesHtml = critBadges.join(' ');
 
         const prevTotStr = (r.dt_anterior ? r.dt_anterior + ' ' + (r.ht_anterior || '') : '-');
         const currTotStr = (r.dt_recebido ? r.dt_recebido + ' ' + (r.ht_recebido || '') : '-');
@@ -2425,6 +2498,24 @@ function generateHtmlReport(embeddedData = null) {
         const prevStStr = (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior + ' seç' : '-');
         const currStStr = (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido + ' seç' : '-');
         const isStRegression = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
+
+        const dgAdvOrSame = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
+          r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
+        ));
+        const isInversion = Boolean((r.criterio && r.criterio.includes('INVERSÃO')) || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && (isTotRegression || isStRegression)));
+
+        if (isInversion) {
+          if (isTotRegression && isStRegression) {
+            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém DT/HT e ST retrocederam!">🚨 INVERSÃO: DG ↗ | DT/ST ↘</span>');
+          } else if (isTotRegression) {
+            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span>');
+          } else if (isStRegression) {
+            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Seções Apuradas (ST) diminuíram!">🚨 INVERSÃO: DG ↗ | ST ↘</span>');
+          }
+        }
+
+        if (critBadges.length === 0) critBadges.push('<span class="badge badge-danger">REGRESSÃO FORENSE</span>');
+        const critBadgesHtml = critBadges.join(' ');
 
         const uf = (r.fileMeta && r.fileMeta.uf) ? r.fileMeta.uf : '-';
         const cargo = (r.fileMeta && r.fileMeta.cargo) ? r.fileMeta.cargo : '-';
@@ -2652,10 +2743,12 @@ function generateHtmlReport(embeddedData = null) {
               '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Cargo: <strong>' + cargo + '</strong></span>' +
               '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Eleição: <strong>' + eleicao + '</strong></span>' +
             '</div>' +
-            '<div style="display:flex; align-items:center; gap:6px; font-family:monospace; font-size:0.74rem;">' +
+            '<div style="display:flex; align-items:center; gap:6px; font-family:monospace; font-size:0.74rem; flex-wrap:wrap;">' +
               '<span style="color:#94a3b8;">DG/HG:</span> ' +
               '<span style="color:#10b981;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</span>' +
-              '<span style="color:#ef4444; font-weight:bold;">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
+              '<span style="' + (dgAdvOrSame ? 'color:#10b981;' : 'color:#ef4444; font-weight:bold;') + '">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
+              (isTotRegression ? (' <span style="background:rgba(249,115,22,0.15); border:1px solid rgba(249,115,22,0.3); padding:1px 5px; border-radius:3px; color:#fb923c;"><span style="color:#94a3b8;">DT:</span> ' + (r.dt_anterior ? r.dt_anterior.substring(0, 5) + ' ' + (r.ht_anterior || '') : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.dt_recebido ? r.dt_recebido.substring(0, 5) + ' ' + (r.ht_recebido || '') : '-') + ' ↘</strong></span>') : '') +
+              (isStRegression ? (' <span style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); padding:1px 5px; border-radius:3px; color:#f472b6;"><span style="color:#94a3b8;">ST:</span> ' + (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido : '-') + ' ↘</strong></span>') : '') +
               (r.idg_anterior ? ('<span style="color:#94a3b8; margin-left:4px;">(IDG: ' + r.idg_anterior + ' ➔ <strong style="color:#fca5a5;">' + (r.idg_recebido || '-') + '</strong>)</span>') : '') +
             '</div>' +
           '</div>' +
@@ -3011,7 +3104,273 @@ function generateHtmlReport(embeddedData = null) {
       loadReportData();
       setInterval(loadReportData, 10000);
     }
+
+    // =====================================================================
+    // GERENCIAMENTO E EDIÇÃO DINÂMICA DE RODADAS NO DOSSIÊ
+    // =====================================================================
+    function openRodadasModal() {
+      document.getElementById('rodadasModal').style.display = 'flex';
+      loadRodadasList();
+    }
+
+    function closeRodadasModal() {
+      document.getElementById('rodadasModal').style.display = 'none';
+    }
+
+    async function loadRodadasList() {
+      const container = document.getElementById('rodadasListContainer');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/rodadas');
+        const data = await res.json();
+        renderRodadasList(data.list || [], data.active);
+      } catch (err) {
+        container.innerHTML = '<div style="color:#ef4444; font-size:0.82rem;">Erro ao carregar rodadas: ' + err.message + '</div>';
+      }
+    }
+
+    function renderRodadasList(list, active) {
+      const container = document.getElementById('rodadasListContainer');
+      if (!container) return;
+      if (!list || !list.length) {
+        container.innerHTML = '<div style="color:#94a3b8; font-size:0.82rem;">Nenhuma rodada cadastrada.</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      for (const r of list) {
+        const isActive = active && active.id === r.id;
+        const d = new Date(r.inicio_unix);
+        const item = document.createElement('div');
+        item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:' + (isActive ? 'rgba(16, 185, 129, 0.15)' : '#0f172a') + '; border:1px solid ' + (isActive ? '#10b981' : '#334155') + '; padding:10px 14px; border-radius:8px; gap:10px;';
+        
+        const info = document.createElement('div');
+        info.innerHTML = '<div style="font-size:0.88rem; font-weight:700; color:' + (isActive ? '#10b981' : '#f8fafc') + ';">' + (isActive ? '🟢 ' : '') + r.nome + '</div>' +
+                         '<div style="font-size:0.74rem; color:#94a3b8;">Início: ' + d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR') + '</div>';
+        item.appendChild(info);
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex; gap:6px; align-items:center;';
+
+        if (!isActive) {
+          const btnAtivar = document.createElement('button');
+          btnAtivar.className = 'btn';
+          btnAtivar.style.cssText = 'background:#0284c7; padding:4px 10px; font-size:0.75rem;';
+          btnAtivar.innerText = 'Ativar';
+          btnAtivar.onclick = () => activateRodada(r.id);
+          actions.appendChild(btnAtivar);
+        }
+
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn-copy';
+        btnEdit.innerText = '✏️';
+        btnEdit.title = 'Editar nome, data e hora da rodada';
+        btnEdit.onclick = () => openEditRodadaModal(r);
+        actions.appendChild(btnEdit);
+
+        const btnDel = document.createElement('button');
+        btnDel.className = 'btn-copy';
+        btnDel.style.color = '#ef4444';
+        btnDel.innerText = '🗑️';
+        btnDel.title = 'Excluir marco desta rodada';
+        btnDel.onclick = () => deleteRodadaPrompt(r.id);
+        actions.appendChild(btnDel);
+
+        item.appendChild(actions);
+        container.appendChild(item);
+      }
+    }
+
+    async function activateRodada(id) {
+      await fetch('/api/rodadas/ativar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      loadRodadasList();
+      loadReportData();
+    }
+
+    async function submitNewRodada() {
+      const input = document.getElementById('newRodadaInput');
+      const nome = input.value.trim();
+      await fetch('/api/rodadas/nova', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome })
+      });
+      input.value = '';
+      loadRodadasList();
+      loadReportData();
+    }
+
+    let currentEditingRodada = null;
+
+    function openEditRodadaModal(r) {
+      currentEditingRodada = r;
+      document.getElementById('editRodadaId').value = r.id;
+      document.getElementById('editRodadaNome').value = r.nome || '';
+      
+      const d = new Date(r.inicio_unix);
+      const pad = n => String(n).padStart(2, '0');
+      const localIso = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      document.getElementById('editRodadaInicio').value = localIso;
+
+      const badge = document.getElementById('editRodadaBadge');
+      if (badge) {
+        const isActive = Boolean(r.ativo) || (typeof activeRodada !== 'undefined' && activeRodada && activeRodada.id === r.id);
+        badge.textContent = isActive ? '🟢 RODADA ATIVA' : ('#' + r.id);
+        badge.style.color = isActive ? '#10b981' : '#38bdf8';
+      }
+
+      document.getElementById('editRodadaModal').style.display = 'flex';
+      setTimeout(() => document.getElementById('editRodadaNome').focus(), 50);
+    }
+
+    function closeEditRodadaModal() {
+      document.getElementById('editRodadaModal').style.display = 'none';
+      currentEditingRodada = null;
+    }
+
+    function setEditRodadaToMidnight() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('editRodadaInicio').value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + 'T00:00:00';
+    }
+
+    function setEditRodadaToNow() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('editRodadaInicio').value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    }
+
+    async function submitEditRodadaModal() {
+      const id = document.getElementById('editRodadaId').value;
+      const nome = document.getElementById('editRodadaNome').value.trim();
+      const inicioStr = document.getElementById('editRodadaInicio').value;
+
+      if (!nome) {
+        alert('Por favor, informe um nome para a rodada.');
+        return;
+      }
+      if (!inicioStr) {
+        alert('Por favor, informe a data e hora de início.');
+        return;
+      }
+
+      const inicioDate = new Date(inicioStr);
+      if (isNaN(inicioDate.getTime())) {
+        alert('Data/hora inválida!');
+        return;
+      }
+
+      const inicioUnix = inicioDate.getTime();
+
+      try {
+        const res = await fetch('/api/rodadas/editar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, nome, inicioUnix })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closeEditRodadaModal();
+          loadRodadasList();
+          loadReportData();
+        } else {
+          alert('Erro ao editar rodada: ' + (data.error || 'Erro desconhecido'));
+        }
+      } catch (err) {
+        alert('Erro de conexão ao editar rodada: ' + err.message);
+      }
+    }
+
+    async function deleteRodadaPrompt(id) {
+      if (!confirm('Tem certeza que deseja excluir este marco de rodada?')) return;
+      await fetch('/api/rodadas/excluir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      loadRodadasList();
+      loadReportData();
+    }
   </script>
+
+  <!-- MODAL DE GERENCIAMENTO DE RODADAS -->
+  <div id="rodadasModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
+    <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:92%; max-width:620px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); color:#f8fafc; max-height:90vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+          📍 Delimitador Lógico de Rodadas
+        </h3>
+        <button onclick="closeRodadasModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <p style="font-size:0.83rem; color:#94a3b8; margin-bottom:16px; line-height:1.4;">
+        As rodadas definem o <strong>marco zero</strong> para contagem de regressões e cálculo de SLAs, sem apagar nenhum dado do banco SQLite.
+      </p>
+
+      <!-- CRIAR NOVA RODADA -->
+      <div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:14px; margin-bottom:20px;">
+        <h4 style="margin:0 0 10px 0; font-size:0.9rem; color:#38bdf8;">➕ Iniciar Nova Rodada</h4>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <input type="text" id="newRodadaInput" placeholder="Nome da rodada (Ex: Simulado Tarde, Carga 50%)..." style="flex:1; min-width:200px; background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:8px 12px; border-radius:6px; font-size:0.85rem; outline:none;" />
+          <button onclick="submitNewRodada()" class="btn" style="background:#10b981; padding:8px 16px;">🚀 Iniciar Rodada Agora</button>
+        </div>
+      </div>
+
+      <!-- LISTA DE RODADAS HISTÓRICAS -->
+      <div>
+        <h4 style="margin:0 0 10px 0; font-size:0.9rem; color:#f8fafc;">Histórico de Rodadas Registradas</h4>
+        <div id="rodadasListContainer" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow-y:auto;">
+          Carregando histórico...
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+        <button onclick="closeRodadasModal()" class="btn btn-outline" style="padding:8px 18px;">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE EDIÇÃO DE ESCOPO DA RODADA (NOME + DATA E HORA COM SEGUNDOS) -->
+  <div id="editRodadaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:10000; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div style="background:#1e293b; border:1px solid #38bdf8; border-radius:14px; width:92%; max-width:520px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); color:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px; color:#38bdf8;">
+          ✏️ Editar Escopo da Rodada <span id="editRodadaBadge" style="font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.08);"></span>
+        </h3>
+        <button onclick="closeEditRodadaModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <input type="hidden" id="editRodadaId" value="" />
+
+      <div style="margin-bottom:16px;">
+        <label style="display:block; font-size:0.80rem; color:#94a3b8; font-weight:700; margin-bottom:6px;">Nome de Identificação da Rodada:</label>
+        <input type="text" id="editRodadaNome" placeholder="Ex: Simulado Tarde, Carga 50%..." style="width:100%; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:8px 12px; border-radius:6px; font-size:0.88rem; outline:none; box-sizing:border-box;" />
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <label style="font-size:0.80rem; color:#94a3b8; font-weight:700;">Data e Hora de Início (Marco Zero com Segundos):</label>
+          <div style="display:flex; gap:6px;">
+            <button type="button" onclick="setEditRodadaToMidnight()" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Hoje 00:00:00</button>
+            <button type="button" onclick="setEditRodadaToNow()" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Agora</button>
+          </div>
+        </div>
+        <input type="datetime-local" step="1" id="editRodadaInicio" style="width:100%; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:8px 12px; border-radius:6px; font-size:0.88rem; outline:none; box-sizing:border-box; color-scheme:dark;" />
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:5px; line-height:1.4;">
+          💡 Define o instante exato com segundos (<strong style="color:#e2e8f0;">HH:mm:ss</strong>) considerado para o marco zero das regressões e cálculo do SLA de propagação. Ocorrências anteriores são preservadas no histórico geral.
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button onclick="closeEditRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
+        <button onclick="submitEditRodadaModal()" class="btn" style="background:#0284c7; padding:8px 18px; font-weight:700;">💾 Salvar Alterações</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>`;
 
@@ -3419,8 +3778,17 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   }
 
   // Incoerência de Geração vs Totalização
-  if (!isTimeRegression && isTotTimeRegression) {
-    reasons.push(`🚨 ANOMALIA: Arquivo foi regerado (DG/HG avançou), mas a Totalização (DT/HT) retrocedeu!`);
+  const isDgAdvancedOrSame = (!isTimeRegression && genTime !== null && prev.genTime !== null && genTime >= prev.genTime);
+  const isInversion = isDgAdvancedOrSame && (isTotTimeRegression || isStRegression);
+
+  if (isInversion) {
+    if (isTotTimeRegression && isStRegression) {
+      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE TOTALIZAÇÃO: Arquivo gerado mais recentemente (DG/HG avançou), mas a Totalização (DT/HT) e Seções Apuradas (ST) retrocederam!`);
+    } else if (isTotTimeRegression) {
+      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE TOTALIZAÇÃO: Arquivo gerado mais recentemente (DG/HG avançou), mas a Totalização (DT/HT) retrocedeu!`);
+    } else if (isStRegression) {
+      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE SEÇÕES: Arquivo gerado mais recentemente (DG/HG avançou), mas as Seções Apuradas (ST) diminuíram!`);
+    }
   } else if (!isTimeRegression && isIdgRegression && genTime !== null && prev.genTime !== null && genTime > prev.genTime) {
     reasons.push(`🚨 ANOMALIA DE GERAÇÃO: DG/HG avançou no tempo, mas IDG retrocedeu sequencialmente!`);
   }
@@ -3430,10 +3798,25 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
   const violatedCriteria = [];
   if (isTimeRegression) violatedCriteria.push('TEMPO (DG/HG)');
-  if (isTotTimeRegression) violatedCriteria.push('TOTALIZAÇÃO (DT/HT)');
-  if (isStRegression) violatedCriteria.push('SEÇÕES (ST)');
+  if (isTotTimeRegression) {
+    if (isInversion && !isStRegression) {
+      violatedCriteria.push('TOTALIZAÇÃO (DT/HT) [INVERSÃO: DG ↗, DT ↘]');
+    } else {
+      violatedCriteria.push('TOTALIZAÇÃO (DT/HT)');
+    }
+  }
+  if (isStRegression) {
+    if (isInversion && !isTotTimeRegression) {
+      violatedCriteria.push('SEÇÕES (ST) [INVERSÃO: DG ↗, ST ↘]');
+    } else {
+      violatedCriteria.push('SEÇÕES (ST)');
+    }
+  }
 
-  const criterion = isRegression ? violatedCriteria.join(' + ') : 'NORMAL';
+  let criterion = isRegression ? violatedCriteria.join(' + ') : 'NORMAL';
+  if (isInversion && isTotTimeRegression && isStRegression) {
+    criterion = 'TOTALIZAÇÃO (DT/HT) + SEÇÕES (ST) [INVERSÃO: DG ↗, DT/ST ↘]';
+  }
 
   if (isRegression) {
     currentMeta.status = 'REGRESSAO_DETECTADA';
@@ -3448,6 +3831,9 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
     console.log(`\n${RED}${BOLD}======================================================================${RESET}`);
     console.log(`${RED}${BOLD}🚨🚨 [ALERTA: REGRESSÃO NO SERVIDOR ${serverKey} (${SERVERS[serverKey]?.role})!] 🚨🚨${RESET}`);
+    if (isInversion) {
+      console.log(`${RED}${BOLD}🚨🚨 [HIPÓTESE DETECTADA: INVERSÃO DE DADOS (DG/HG AVANÇOU, DT/ST RETROCEDEU)!] 🚨🚨${RESET}`);
+    }
     console.log(`${RED}Critério Violado:${RESET} ${BOLD}${criterion}${RESET}`);
     console.log(`${RED}Arquivo:${RESET}          ${BOLD}${filename}${RESET} (${source})`);
     console.log(`${RED}Motivo:${RESET}           ${reasons.join(' | ')}`);
@@ -5045,7 +5431,7 @@ function setElText(id, val) {
               </div>
               <div style="display:flex; align-items:center; gap:6px;">
                 <span class="tag-pill tag-eleicao" style="font-size:0.68rem; padding:1px 5px;">\${row.comparison.primaryReplicaKey || 'RÉPLICA'}</span>
-                <span style="font-family:monospace; font-weight:700; color:#38bdf8;" title="Cache-Control e TTL">\${row.sim?.cacheControl || (row.sim?.maxAge !== null ? 'max-age=' + row.sim.maxAge : '-')}</span>
+                <span style="font-family:monospace; font-weight:700; color:#38bdf8;" title="Cache-Control e TTL">\${row.sim?.cacheControl || (row.sim?.maxAge != null ? 'max-age=' + row.sim.maxAge : '-')}</span>
                 \${row.sim?.serverIp ? ('<span class="tag-ip" title="Instância: ' + row.sim.serverIp + '">📍 ' + row.sim.serverIp + '</span>') : ''}
               </div>
               <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
@@ -5623,8 +6009,8 @@ function setElText(id, val) {
         const btnEdit = document.createElement('button');
         btnEdit.className = 'btn-copy';
         btnEdit.innerText = '✏️';
-        btnEdit.title = 'Editar nome ou horário';
-        btnEdit.onclick = () => editRodadaPrompt(r);
+        btnEdit.title = 'Editar nome, data e hora da rodada';
+        btnEdit.onclick = () => openEditRodadaModal(r);
         actions.appendChild(btnEdit);
 
         const btnDel = document.createElement('button');
@@ -5679,22 +6065,85 @@ function setElText(id, val) {
       loadData();
     }
 
-    async function editRodadaPrompt(r) {
-      const newName = prompt('Editar nome da rodada:', r.nome);
-      if (newName === null) return;
-      const curDateStr = new Date(r.inicio_unix).toISOString().slice(0, 19);
-      const newTimeStr = prompt('Editar data/hora de início (formato ISO YYYY-MM-DDTHH:mm:ss):', curDateStr);
-      if (!newTimeStr) return;
-      const newUnix = new Date(newTimeStr).getTime();
-      if (isNaN(newUnix)) { alert('Data/hora inválida!'); return; }
+    let currentEditingRodada = null;
 
-      await fetch('/api/rodadas/editar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: r.id, nome: newName, inicioUnix: newUnix })
-      });
-      loadRodadasList();
-      loadData();
+    function openEditRodadaModal(r) {
+      currentEditingRodada = r;
+      document.getElementById('editRodadaId').value = r.id;
+      document.getElementById('editRodadaNome').value = r.nome || '';
+      
+      const d = new Date(r.inicio_unix);
+      const pad = n => String(n).padStart(2, '0');
+      const localIso = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      document.getElementById('editRodadaInicio').value = localIso;
+
+      const badge = document.getElementById('editRodadaBadge');
+      if (badge) {
+        const isActive = Boolean(r.ativo) || (currentActiveRodadaInfo && currentActiveRodadaInfo.id === r.id);
+        badge.textContent = isActive ? '🟢 RODADA ATIVA' : ('#' + r.id);
+        badge.style.color = isActive ? '#10b981' : '#38bdf8';
+      }
+
+      document.getElementById('editRodadaModal').style.display = 'flex';
+      setTimeout(() => document.getElementById('editRodadaNome').focus(), 50);
+    }
+
+    function closeEditRodadaModal() {
+      document.getElementById('editRodadaModal').style.display = 'none';
+      currentEditingRodada = null;
+    }
+
+    function setEditRodadaToMidnight() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('editRodadaInicio').value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + 'T00:00:00';
+    }
+
+    function setEditRodadaToNow() {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('editRodadaInicio').value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    }
+
+    async function submitEditRodadaModal() {
+      const id = document.getElementById('editRodadaId').value;
+      const nome = document.getElementById('editRodadaNome').value.trim();
+      const inicioStr = document.getElementById('editRodadaInicio').value;
+
+      if (!nome) {
+        alert('Por favor, informe um nome para a rodada.');
+        return;
+      }
+      if (!inicioStr) {
+        alert('Por favor, informe a data e hora de início.');
+        return;
+      }
+
+      const inicioDate = new Date(inicioStr);
+      if (isNaN(inicioDate.getTime())) {
+        alert('Data/hora inválida!');
+        return;
+      }
+
+      const inicioUnix = inicioDate.getTime();
+
+      try {
+        const res = await fetch('/api/rodadas/editar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, nome, inicioUnix })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closeEditRodadaModal();
+          loadRodadasList();
+          loadData();
+        } else {
+          alert('Erro ao editar rodada: ' + (data.error || 'Erro desconhecido'));
+        }
+      } catch (err) {
+        alert('Erro de conexão ao editar rodada: ' + err.message);
+      }
     }
 
     async function deleteRodadaPrompt(id) {
@@ -6047,7 +6496,7 @@ function setElText(id, val) {
       const container = document.getElementById('regressoesListContainer');
       container.innerHTML = '<div style="text-align:center; padding:40px; color:#94a3b8; font-size:0.9rem;">⏳ Buscando no histórico completo do banco SQLite...</div>';
       try {
-        let fetchUrl = '/api/regressoes?limit=250';
+        let fetchUrl = '/api/regressoes?limit=5000&all=1';
         if (q) fetchUrl += '&q=' + encodeURIComponent(q);
         if (grn) fetchUrl += '&grn=' + encodeURIComponent(grn);
         if (server) fetchUrl += '&servidor=' + encodeURIComponent(server);
@@ -6092,7 +6541,18 @@ function setElText(id, val) {
         if (criterion) {
           const c = (r.criterio || '').toUpperCase();
           const m = (r.motivo || '').toUpperCase();
-          if (!c.includes(criterion) && !m.includes(criterion)) return false;
+          const d = (r.detalhes || '').toUpperCase();
+          if (criterion === 'INVERSAO_DG_DT_ST') {
+            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+            const dgAdv = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
+              r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
+            ));
+            const totReg = Boolean(r.dt_recebido && r.dt_anterior && (r.dt_recebido < r.dt_anterior || (r.dt_recebido === r.dt_anterior && r.ht_recebido < r.ht_anterior)));
+            const stReg = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
+            if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+          } else {
+            if (!c.includes(criterion) && !m.includes(criterion)) return false;
+          }
         }
         if (grnFilter) {
           const rGrn = (r.akamai_grn || '').toLowerCase();
@@ -6182,6 +6642,21 @@ function setElText(id, val) {
         const prevStStr = (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior + ' seç' : '-');
         const currStStr = (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido + ' seç' : '-');
         const isStRegression = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
+
+        const dgAdvOrSame = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
+          r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
+        ));
+        const isInversion = Boolean(crit.includes('INVERSÃO') || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && (isTotRegression || isStRegression)));
+
+        if (isInversion) {
+          if (isTotRegression && isStRegression) {
+            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém DT/HT e ST retrocederam!">🚨 INVERSÃO: DG ↗ | DT/ST ↘</span> ';
+          } else if (isTotRegression) {
+            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span> ';
+          } else if (isStRegression) {
+            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Seções Apuradas (ST) diminuíram!">🚨 INVERSÃO: DG ↗ | ST ↘</span> ';
+          }
+        }
 
         const uf = (r.fileMeta && r.fileMeta.uf) ? r.fileMeta.uf : '-';
         const cargo = (r.fileMeta && r.fileMeta.cargo) ? r.fileMeta.cargo : '-';
@@ -6380,10 +6855,12 @@ function setElText(id, val) {
               '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Cargo: <strong>' + cargo + '</strong></span>' +
               '<span style="background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:0.72rem; color:#cbd5e1;">Eleição: <strong>' + eleicao + '</strong></span>' +
             '</div>' +
-            '<div style="display:flex; align-items:center; gap:6px; font-family:monospace; font-size:0.74rem;">' +
+            '<div style="display:flex; align-items:center; gap:6px; font-family:monospace; font-size:0.74rem; flex-wrap:wrap;">' +
               '<span style="color:#94a3b8;">DG/HG:</span> ' +
               '<span style="color:#10b981;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</span>' +
-              '<span style="color:#ef4444; font-weight:bold;">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
+              '<span style="' + (dgAdvOrSame ? 'color:#10b981;' : 'color:#ef4444; font-weight:bold;') + '">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
+              (isTotRegression ? (' <span style="background:rgba(249,115,22,0.15); border:1px solid rgba(249,115,22,0.3); padding:1px 5px; border-radius:3px; color:#fb923c;"><span style="color:#94a3b8;">DT:</span> ' + (r.dt_anterior ? r.dt_anterior.substring(0, 5) + ' ' + (r.ht_anterior || '') : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.dt_recebido ? r.dt_recebido.substring(0, 5) + ' ' + (r.ht_recebido || '') : '-') + ' ↘</strong></span>') : '') +
+              (isStRegression ? (' <span style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); padding:1px 5px; border-radius:3px; color:#f472b6;"><span style="color:#94a3b8;">ST:</span> ' + (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido : '-') + ' ↘</strong></span>') : '') +
               (r.idg_anterior ? ('<span style="color:#94a3b8; margin-left:4px;">(IDG: ' + r.idg_anterior + ' ➔ <strong style="color:#fca5a5;">' + (r.idg_recebido || '-') + '</strong>)</span>') : '') +
             '</div>' +
           '</div>' +
@@ -7116,6 +7593,44 @@ function setElText(id, val) {
     </div>
   </div>
 
+  <!-- MODAL DE EDIÇÃO DE ESCOPO DA RODADA (NOME + DATA E HORA COM SEGUNDOS) -->
+  <div id="editRodadaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:10000; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div style="background:#1e293b; border:1px solid #38bdf8; border-radius:14px; width:92%; max-width:520px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); color:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px; color:#38bdf8;">
+          ✏️ Editar Escopo da Rodada <span id="editRodadaBadge" style="font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.08);"></span>
+        </h3>
+        <button onclick="closeEditRodadaModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <input type="hidden" id="editRodadaId" value="" />
+
+      <div style="margin-bottom:16px;">
+        <label style="display:block; font-size:0.80rem; color:#94a3b8; font-weight:700; margin-bottom:6px;">Nome de Identificação da Rodada:</label>
+        <input type="text" id="editRodadaNome" placeholder="Ex: Simulado Tarde, Carga 50%..." style="width:100%; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:8px 12px; border-radius:6px; font-size:0.88rem; outline:none; box-sizing:border-box;" />
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <label style="font-size:0.80rem; color:#94a3b8; font-weight:700;">Data e Hora de Início (Marco Zero com Segundos):</label>
+          <div style="display:flex; gap:6px;">
+            <button type="button" onclick="setEditRodadaToMidnight()" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Hoje 00:00:00</button>
+            <button type="button" onclick="setEditRodadaToNow()" class="btn-copy" style="font-size:0.68rem; padding:2px 6px;">Agora</button>
+          </div>
+        </div>
+        <input type="datetime-local" step="1" id="editRodadaInicio" style="width:100%; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:8px 12px; border-radius:6px; font-size:0.88rem; outline:none; box-sizing:border-box; color-scheme:dark;" />
+        <div style="font-size:0.72rem; color:#94a3b8; margin-top:5px; line-height:1.4;">
+          💡 Define o instante exato com segundos (<strong style="color:#e2e8f0;">HH:mm:ss</strong>) considerado para o marco zero das regressões e cálculo do SLA de propagação. Ocorrências anteriores são preservadas no histórico geral.
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button onclick="closeEditRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
+        <button onclick="submitEditRodadaModal()" class="btn" style="background:#0284c7; padding:8px 18px; font-weight:700;">💾 Salvar Alterações</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL DE EXPORTAÇÃO ZIP DE VERSÕES -->
   <div id="zipModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
     <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:90%; max-width:540px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); color:#f8fafc;">
@@ -7241,6 +7756,7 @@ function setElText(id, val) {
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
           <select id="regFilterCriterion" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem;">
             <option value="">Todos os Critérios</option>
+            <option value="INVERSAO_DG_DT_ST">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
             <option value="TEMPO">DG/HG (Tempo Geração)</option>
             <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
             <option value="SEÇÕES">ST (Seções Apuradas)</option>
@@ -7657,7 +8173,7 @@ function getEnrichedRegressions(filters = {}) {
       sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
       params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
     }
-  } else if (!grnFilter && !filters.allRodada) {
+  } else if (!grnFilter && !filters.allRodada && criterionFilter !== 'INVERSAO_DG_DT_ST') {
     sql += 'AND timestamp_iso >= ? ';
     params.push(rodadaStartIso);
   }
@@ -7673,8 +8189,12 @@ function getEnrichedRegressions(filters = {}) {
   }
 
   if (criterionFilter) {
-    sql += 'AND (criterio LIKE ? OR motivo LIKE ?) ';
-    params.push(`%${criterionFilter}%`, `%${criterionFilter}%`);
+    if (criterionFilter === 'INVERSAO_DG_DT_ST') {
+      sql += "AND (criterio LIKE '%INVERSÃO%' OR motivo LIKE '%INVERSÃO%' OR detalhes LIKE '%INVERSÃO_DG_DT_ST%') ";
+    } else {
+      sql += 'AND (criterio LIKE ? OR motivo LIKE ?) ';
+      params.push(`%${criterionFilter}%`, `%${criterionFilter}%`);
+    }
   }
 
   if (ufFilter) {
@@ -7728,7 +8248,7 @@ function getEnrichedRegressions(filters = {}) {
         rawHeaders = parsed.response ? parsed.response : parsed;
       } catch(e) {}
     }
-    if (Object.keys(rawHeaders).length === 0 && r.evidencia_raw_path) {
+    if (Object.keys(rawHeaders).length === 0 && r.evidencia_raw_path && rows.length <= 100) {
       rawMeta = getRawMetadataFast(r.evidencia_raw_path);
       rawHeaders = (rawMeta && (rawMeta.response_headers || rawMeta.headers)) || {};
     }
@@ -7851,7 +8371,7 @@ function startDashboardServer() {
     if (url.pathname === '/export/dossie-html') {
       try {
         const limitParam = url.searchParams.get('limit');
-        const limit = limitParam !== null ? parseInt(limitParam, 10) : 500;
+        const limit = limitParam !== null ? parseInt(limitParam, 10) : 2000;
         const q = (url.searchParams.get('q') || '').trim();
         const grn = (url.searchParams.get('grn') || '').trim();
         const servidor = (url.searchParams.get('servidor') || '').trim();
@@ -7859,12 +8379,11 @@ function startDashboardServer() {
         const uf = (url.searchParams.get('uf') || '').trim();
         const cargo = (url.searchParams.get('cargo') || '').trim();
         const eleicao = (url.searchParams.get('eleicao') || '').trim();
-        const allRodada = url.searchParams.get('allRodada') === 'true';
 
         const compPayload = getComparisonPayload();
         const regsPayload = getEnrichedRegressions({
           limit,
-          allRodada: allRodada || (!q && !grn && !servidor && !criterio && !uf),
+          allRodada: true,
           q,
           grn,
           servidor,
@@ -7873,6 +8392,21 @@ function startDashboardServer() {
           cargo,
           eleicao
         });
+
+        // Ensure all inversion cases are always bundled into standalone export
+        if (criterio !== 'INVERSAO_DG_DT_ST' && !q && !grn) {
+          const invPayload = getEnrichedRegressions({
+            limit: 2000,
+            allRodada: true,
+            criterio: 'INVERSAO_DG_DT_ST'
+          });
+          const existingIds = new Set(regsPayload.regressoes.map(r => r.id));
+          for (const inv of invPayload.regressoes) {
+            if (!existingIds.has(inv.id)) {
+              regsPayload.regressoes.push(inv);
+            }
+          }
+        }
         const rodadasRows = db.prepare('SELECT * FROM rodadas ORDER BY id DESC').all();
         const activeRodada = getActiveRodada();
         
@@ -8386,8 +8920,10 @@ function startDashboardServer() {
         const cargo = (url.searchParams.get('cargo') || '').trim();
         const eleicao = (url.searchParams.get('eleicao') || '').trim();
 
+        const allRodada = url.searchParams.get('all') === '1' || url.searchParams.get('allRodada') === '1';
         const payload = getEnrichedRegressions({
           limit,
+          allRodada,
           q,
           grn,
           servidor,
@@ -8522,6 +9058,7 @@ async function start() {
   }, 6000);
 
   setInterval(syncTabs, 10000);
+  setInterval(checkDayRollover, 30000);
   setInterval(async () => {
     await discoverAvailableElections();
     updateTrackedCatalog();
