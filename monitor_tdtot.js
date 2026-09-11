@@ -1368,10 +1368,73 @@ function generateHtmlReport(embeddedData = null) {
     /* AUTO REFRESH TOGGLE */
     .live-pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block; box-shadow: 0 0 8px #10b981; animation: pulseLive 2s infinite; }
     @keyframes pulseLive { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    /* BARRA DE PROGRESSO GLOBAL SUPERIOR */
+    #topProgressBar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, #38bdf8, #818cf8, #a855f7, #10b981);
+      z-index: 100000;
+      opacity: 0;
+      transition: width 0.25s ease, opacity 0.3s ease;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.85);
+      pointer-events: none;
+    }
+    #topProgressBar.active {
+      opacity: 1;
+    }
+    #topProgressBar.indeterminate {
+      opacity: 1;
+      width: 100% !important;
+      background: linear-gradient(90deg, transparent, #38bdf8, #a855f7, #10b981, transparent);
+      background-size: 200% 100%;
+      animation: indeterminateBarAnim 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes indeterminateBarAnim {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* BADGE COM SPINNER DE ATUALIZAÇÃO */
+    .updating-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 2px 9px;
+      border-radius: 9999px;
+      letter-spacing: 0.02em;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .spinner-icon {
+      width: 11px;
+      height: 11px;
+      border: 2px solid rgba(56, 189, 248, 0.25);
+      border-top-color: var(--accent-blue);
+      border-radius: 50%;
+      animation: spinIndicator 0.65s linear infinite;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    @keyframes spinIndicator {
+      to { transform: rotate(360deg); }
+    }
+    .table-updating {
+      opacity: 0.65;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
   </style>
 </head>
 <body>
+  <!-- BARRA DE PROGRESSO SUPERIOR -->
+  <div id="topProgressBar"></div>
   <header>
     <div>
       <h1>🗳️ Dossiê Técnico de Auditoria Forense Completo</h1>
@@ -1454,11 +1517,15 @@ function generateHtmlReport(embeddedData = null) {
   <!-- PAINEL DE FILTROS UNIFICADO -->
   <div class="card" style="padding: 14px 18px; margin-bottom: 16px;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-      <strong style="font-size: 0.90rem; color: #f8fafc;">🔍 Filtros Multidimensionais</strong>
-      <div style="display: flex; gap: 8px; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <strong style="font-size: 0.90rem; color: #f8fafc;">🔍 Filtros Multidimensionais</strong>
         <span id="activeFiltersBadge" style="font-size: 0.72rem; background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); padding: 2px 8px; border-radius: 9999px; display: none;">Filtros Ativos</span>
-        <button class="btn-reset" onclick="resetFilters()" style="padding: 4px 10px; font-size: 0.75rem;">↺ Limpar Filtros</button>
+        <span id="dossieFilterUpdatingBadge" class="updating-badge" style="display: none;">
+          <span class="spinner-icon"></span>
+          <span>Filtrando...</span>
+        </span>
       </div>
+      <button class="btn-reset" onclick="resetFilters()" style="padding: 4px 10px; font-size: 0.75rem;">↺ Limpar Filtros</button>
     </div>
 
     <div class="filter-panel" style="margin-bottom: 0; padding: 0; border: none; background: transparent;">
@@ -1565,6 +1632,10 @@ function generateHtmlReport(embeddedData = null) {
       <div style="display: flex; align-items: center; gap: 8px;">
         <strong style="font-size: 0.95rem; color: #f8fafc;">📊 1. Matriz de Propagação e SLA de Sincronização</strong>
         <span id="compTableCountBadge" style="font-size: 0.75rem; background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 6px;">(carregando...)</span>
+        <span id="dossieCompUpdatingBadge" class="updating-badge" style="display: none;">
+          <span class="spinner-icon"></span>
+          <span>Atualizando tabela...</span>
+        </span>
       </div>
 
       <!-- SELETOR DINÂMICO DE COLUNAS -->
@@ -1587,25 +1658,27 @@ function generateHtmlReport(embeddedData = null) {
             Ative ou desative as colunas exibidas no dossiê de auditoria. Suas opções são salvas automaticamente no navegador.
           </div>
           <div id="colCheckboxesList" style="display:flex; flex-direction:column; gap:6px; max-height:360px; overflow-y:auto; padding-right:4px;">
+            <!-- Renderizado via JS -->
           </div>
         </div>
       </div>
     </div>
 
-    <table>
-      <thead id="compTableHead">
+    <!-- Tabela Comparativa Estrita -->
+    <table id="compTable">
+      <thead>
         <tr>
           <th data-col="classificacao" class="sortable" onclick="setCompSort('classificacao')">Classificação <span id="sort_classificacao" class="sort-icon">⇅</span></th>
-          <th data-col="arquivo" class="sortable" onclick="setCompSort('arquivo')">Caminho do Arquivo & Ações <span id="sort_arquivo" class="sort-icon">⇅</span></th>
-          <th data-col="origin_time" class="sortable" onclick="setCompSort('hmg_time')"><span class="tag-hmg-title">FONTE (HMG)</span><br>Geração (DG/HG) <span id="sort_hmg_time" class="sort-icon">⇅</span></th>
-          <th data-col="replica_time" class="sortable" onclick="setCompSort('sim_time')"><span class="tag-sim-title">CACHE (SIM)</span><br>Geração (DG/HG) <span id="sort_sim_time" class="sort-icon">⇅</span></th>
-          <th data-col="delay_time" class="sortable" onclick="setCompSort('delay_time')" title="Diferença entre data/hora de geração da FONTE e do CACHE">Δ Tempo DG/HG <span id="sort_delay_time" class="sort-icon">⇅</span></th>
-          <th data-col="sync_sla" class="sortable" onclick="setCompSort('sync_sla')" title="Tempo real decorrido até replicação no Cache">SLA Sync (DG/HG) <span id="sort_sync_sla" class="sort-icon">⇅</span></th>
-          <th data-col="cache_ttl" class="sortable" onclick="setCompSort('cache_ttl')" title="Comparativo de Headers HTTP de Cache">⚡ Cache & TTL <span id="sort_cache_ttl" class="sort-icon">⇅</span></th>
+          <th data-col="arquivo" class="sortable" onclick="setCompSort('arquivo')">Caminho do Arquivo & Inspeção <span id="sort_arquivo" class="sort-icon">⇅</span></th>
+          <th data-col="hmg_time" class="sortable" onclick="setCompSort('hmg_time')" title="Data/Hora de Geração na FONTE (DG/HG)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Geração (DG/HG) <span id="sort_hmg_time" class="sort-icon">⇅</span></th>
+          <th data-col="sim_time" class="sortable" onclick="setCompSort('sim_time')" title="Data/Hora de Geração no CACHE (DG/HG)"><span class="tag-sim-title">CACHE (SIM)</span><br>Geração (DG/HG) <span id="sort_sim_time" class="sort-icon">⇅</span></th>
+          <th data-col="delay_time" class="sortable" onclick="setCompSort('delay_time')" title="Diferença na data/hora de geração">Δ Tempo DG/HG <span id="sort_delay_time" class="sort-icon">⇅</span></th>
+          <th data-col="sync_sla" class="sortable" onclick="setCompSort('sync_sla')" title="Tempo decorrido até replicação efetiva no cache">SLA Sync (DG/HG) <span id="sort_sync_sla" class="sort-icon">⇅</span></th>
+          <th data-col="cache_ttl" class="sortable" onclick="setCompSort('cache_ttl')" title="Cache-Control, TTL, CDN e Headers HTTP">⚡ Cache & TTL <span id="sort_cache_ttl" class="sort-icon">⇅</span></th>
           <th data-col="status" class="sortable" onclick="setCompSort('status')">Integridade <span id="sort_status" class="sort-icon">⇅</span></th>
-          <th data-col="origin_tot" class="sortable" onclick="setCompSort('origin_tot')" title="Totalização apurada na FONTE (DT/HT)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Totalização (DT/HT) <span id="sort_origin_tot" class="sort-icon">⇅</span></th>
-          <th data-col="replica_tot" class="sortable" onclick="setCompSort('replica_tot')" title="Totalização apurada no CACHE (DT/HT)"><span class="tag-sim-title">CACHE (SIM)</span><br>Totalização (DT/HT) <span id="sort_replica_tot" class="sort-icon">⇅</span></th>
-          <th data-col="delay_tot" class="sortable" onclick="setCompSort('delay_tot')" title="Diferença de horário de totalização entre FONTE e CACHE">Δ Tempo DT/HT <span id="sort_delay_tot" class="sort-icon">⇅</span></th>
+          <th data-col="origin_tot" class="sortable" onclick="setCompSort('origin_tot')" title="Data/Hora da Totalização na FONTE (DT/HT)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Totalização (DT/HT) <span id="sort_origin_tot" class="sort-icon">⇅</span></th>
+          <th data-col="replica_tot" class="sortable" onclick="setCompSort('replica_tot')" title="Data/Hora da Totalização no CACHE (DT/HT)"><span class="tag-sim-title">CACHE (SIM)</span><br>Totalização (DT/HT) <span id="sort_replica_tot" class="sort-icon">⇅</span></th>
+          <th data-col="delay_tot" class="sortable" onclick="setCompSort('delay_tot')" title="Diferença no horário de totalização">Δ Tempo DT/HT <span id="sort_delay_tot" class="sort-icon">⇅</span></th>
           <th data-col="origin_st" class="sortable" onclick="setCompSort('origin_st')" title="Seções apuradas na FONTE (ST / %)"><span class="tag-hmg-title">FONTE (HMG)</span><br>Seções (ST / %) <span id="sort_origin_st" class="sort-icon">⇅</span></th>
           <th data-col="replica_st" class="sortable" onclick="setCompSort('replica_st')" title="Seções apuradas no CACHE (ST / %)"><span class="tag-sim-title">CACHE (SIM)</span><br>Seções (ST / %) <span id="sort_replica_st" class="sort-icon">⇅</span></th>
           <th data-col="diff_st" class="sortable" onclick="setCompSort('diff_st')" title="Diferença na quantidade de seções apuradas">Δ Seções <span id="sort_diff_st" class="sort-icon">⇅</span></th>
@@ -1624,6 +1697,10 @@ function generateHtmlReport(embeddedData = null) {
       <div style="display: flex; align-items: center; gap: 8px;">
         <strong style="font-size: 1.05rem; color: #f8fafc;">🚨 2. Dossiê Forense de Regressões Temporais Reais (Auditoria Estrita)</strong>
         <span id="regsTableCountBadge" style="font-size: 0.75rem; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); padding: 2px 8px; border-radius: 6px;">(carregando...)</span>
+        <span id="dossieRegsUpdatingBadge" class="updating-badge" style="display: none;">
+          <span class="spinner-icon"></span>
+          <span>Atualizando ocorrências...</span>
+        </span>
       </div>
       <div style="font-size: 0.78rem; color: var(--text-muted);">
         Clique em qualquer ocorrência na coluna esquerda para fixar e auditar seus cabeçalhos HTTP e atributos de rede no painel direito.
@@ -1886,6 +1963,69 @@ function generateHtmlReport(embeddedData = null) {
     }
 
     // =====================================================================
+    // INDICADORES VISUAIS DE CARREGAMENTO / CONSULTA / FILTRAGEM (DOSSIÊ)
+    // =====================================================================
+    function showLoading(msg = 'Atualizando dados...') {
+      const bar = document.getElementById('topProgressBar');
+      if (bar) {
+        bar.classList.add('active', 'indeterminate');
+      }
+      const compBadge = document.getElementById('dossieCompUpdatingBadge');
+      if (compBadge) {
+        compBadge.style.display = 'inline-flex';
+        const span = compBadge.querySelector('span:last-child');
+        if (span) span.textContent = msg;
+      }
+      const regsBadge = document.getElementById('dossieRegsUpdatingBadge');
+      if (regsBadge) {
+        regsBadge.style.display = 'inline-flex';
+        const span = regsBadge.querySelector('span:last-child');
+        if (span) span.textContent = msg;
+      }
+      const filterBadge = document.getElementById('dossieFilterUpdatingBadge');
+      if (filterBadge) {
+        filterBadge.style.display = 'inline-flex';
+        const span = filterBadge.querySelector('span:last-child');
+        if (span) span.textContent = msg.includes('Filtrando') ? msg : 'Consultando...';
+      }
+      const compTable = document.getElementById('compTableBody');
+      if (compTable) compTable.classList.add('table-updating');
+    }
+
+    function hideLoading() {
+      const bar = document.getElementById('topProgressBar');
+      if (bar) {
+        bar.classList.remove('indeterminate');
+        bar.style.width = '100%';
+        setTimeout(() => {
+          bar.classList.remove('active');
+          bar.style.width = '0%';
+        }, 220);
+      }
+      const compBadge = document.getElementById('dossieCompUpdatingBadge');
+      if (compBadge) compBadge.style.display = 'none';
+      const regsBadge = document.getElementById('dossieRegsUpdatingBadge');
+      if (regsBadge) regsBadge.style.display = 'none';
+      const filterBadge = document.getElementById('dossieFilterUpdatingBadge');
+      if (filterBadge) filterBadge.style.display = 'none';
+      const compTable = document.getElementById('compTableBody');
+      if (compTable) compTable.classList.remove('table-updating');
+    }
+
+    let filterDebounceTimer = null;
+    function debounceApplyFilters(delay = 120, customMsg = 'Filtrando...') {
+      showLoading(customMsg);
+      if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+      filterDebounceTimer = setTimeout(() => {
+        applyFiltersInternal();
+      }, delay);
+    }
+
+    function applyFilters() {
+      debounceApplyFilters(40, 'Filtrando...');
+    }
+
+    // =====================================================================
     // ESTADO E ORDENAÇÃO
     // =====================================================================
     let rawComparisonList = [];
@@ -1970,6 +2110,7 @@ function generateHtmlReport(embeddedData = null) {
     let hasLoadedInversions = false;
     async function loadReportData() {
       try {
+        showLoading('Atualizando dossiê forense...');
         const fetchPromises = [
           fetch('/api/comparison'),
           fetch('/api/regressoes?all=1&limit=2000'),
@@ -2010,12 +2151,13 @@ function generateHtmlReport(embeddedData = null) {
         updateRodadasDropdown();
         updatePleitosDropdown(rawComparisonList);
         updateKpis(compData, regsData);
-        applyFilters();
+        applyFiltersInternal();
 
         const lrEl = document.getElementById('lastRefreshTime');
         if (lrEl) lrEl.textContent = '(' + new Date().toLocaleTimeString('pt-BR') + ')';
       } catch(e) {
         console.error('Erro ao carregar dados do dossiê:', e);
+        hideLoading();
       }
     }
 
@@ -2098,7 +2240,7 @@ function generateHtmlReport(embeddedData = null) {
     // =====================================================================
     // APLICAÇÃO DE FILTROS E ORDENAÇÃO
     // =====================================================================
-    function applyFilters() {
+    function applyFiltersInternal() {
       const q = document.getElementById('searchInput').value.toLowerCase().trim();
       const fSrv = document.getElementById('filterServidor').value;
       const fRod = document.getElementById('filterRodada').value;
@@ -2279,6 +2421,7 @@ function generateHtmlReport(embeddedData = null) {
 
       renderCompTable(sortCompData(filteredComp));
       renderRegsTable(sortRegsData(filteredRegs));
+      hideLoading();
     }
 
     function sortCompData(rows) {
@@ -4624,9 +4767,74 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .url-link-hmg:hover { background: rgba(168, 85, 247, 0.25); color: #fff; }
     .btn-copy { cursor: pointer; border: 1px solid #475569; background: #1e293b; color: #cbd5e1; border-radius: 5px; padding: 3px 8px; font-size: 0.74rem; font-weight: 500; transition: all 0.15s; }
     .btn-copy:hover { background: #334155; color: #fff; border-color: #64748b; }
+
+    /* BARRA DE PROGRESSO GLOBAL SUPERIOR */
+    #topProgressBar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, #38bdf8, #818cf8, #a855f7, #10b981);
+      z-index: 100000;
+      opacity: 0;
+      transition: width 0.25s ease, opacity 0.3s ease;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.85);
+      pointer-events: none;
+    }
+    #topProgressBar.active {
+      opacity: 1;
+    }
+    #topProgressBar.indeterminate {
+      opacity: 1;
+      width: 100% !important;
+      background: linear-gradient(90deg, transparent, #38bdf8, #a855f7, #10b981, transparent);
+      background-size: 200% 100%;
+      animation: indeterminateBarAnim 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes indeterminateBarAnim {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* BADGE COM SPINNER DE ATUALIZAÇÃO */
+    .updating-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 2px 9px;
+      border-radius: 9999px;
+      letter-spacing: 0.02em;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .spinner-icon {
+      width: 11px;
+      height: 11px;
+      border: 2px solid rgba(56, 189, 248, 0.25);
+      border-top-color: var(--accent-blue);
+      border-radius: 50%;
+      animation: spinIndicator 0.65s linear infinite;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    @keyframes spinIndicator {
+      to { transform: rotate(360deg); }
+    }
+    .table-updating {
+      opacity: 0.65;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+    }
   </style>
 </head>
 <body>
+  <!-- BARRA DE PROGRESSO SUPERIOR -->
+  <div id="topProgressBar"></div>
   <header style="margin-bottom: 14px; padding-bottom: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--border);">
     <!-- LINHA 1: Título, Status, Eleições, Servidores e Botões de Exportação à Direita -->
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;">
@@ -4782,6 +4990,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div style="display: flex; align-items: center; gap: 8px;">
         <span style="font-size: 0.95rem; font-weight: 600;">🔍 Filtros & Busca Rápida</span>
         <span id="activeFilterBadge" style="font-size: 0.72rem; background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); padding: 2px 8px; border-radius: 9999px; display: none;">Filtros Ativos</span>
+        <span id="filterUpdatingBadge" class="updating-badge" style="display: none;">
+          <span class="spinner-icon"></span>
+          <span>Filtrando...</span>
+        </span>
       </div>
       <span class="toggle-icon" id="filterToggleIcon">▾ Recolher Filtros</span>
     </div>
@@ -4873,6 +5085,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div style="display: flex; align-items: center; gap: 8px;">
         <strong style="font-size: 0.95rem; color: #f8fafc;">📊 Matriz Comparativa de Arquivos</strong>
         <span id="tableCountBadge" style="font-size: 0.75rem; background: rgba(255,255,255,0.06); color: var(--text-muted); padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">(...)</span>
+        <span id="tableUpdatingBadge" class="updating-badge" style="display: none;">
+          <span class="spinner-icon"></span>
+          <span>Atualizando dados...</span>
+        </span>
       </div>
       <div style="display: flex; gap: 8px; align-items: center; position: relative;">
         <button id="btnColSelector" onclick="toggleColumnModal(event)" class="btn-export" style="height: 30px; padding: 0 12px; font-size: 0.80rem; display: flex; align-items: center; gap: 6px; border-color: rgba(56,189,248,0.4); color: #38bdf8; cursor: pointer;">
@@ -4982,6 +5198,62 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       } else {
         icon.textContent = '▾ Recolher Filtros';
       }
+    }
+
+    // =====================================================================
+    // INDICADORES VISUAIS DE CARREGAMENTO / CONSULTA / FILTRAGEM
+    // =====================================================================
+    let loadingTimer = null;
+    function showLoading(msg = 'Atualizando dados...') {
+      const bar = document.getElementById('topProgressBar');
+      if (bar) {
+        bar.classList.add('active', 'indeterminate');
+      }
+      const tableBadge = document.getElementById('tableUpdatingBadge');
+      if (tableBadge) {
+        tableBadge.style.display = 'inline-flex';
+        const span = tableBadge.querySelector('span:last-child');
+        if (span) span.textContent = msg;
+      }
+      const filterBadge = document.getElementById('filterUpdatingBadge');
+      if (filterBadge) {
+        filterBadge.style.display = 'inline-flex';
+        const span = filterBadge.querySelector('span:last-child');
+        if (span) span.textContent = msg.includes('Filtrando') ? msg : 'Consultando...';
+      }
+      const tbl = document.getElementById('compareTableBody');
+      if (tbl) tbl.classList.add('table-updating');
+    }
+
+    function hideLoading() {
+      const bar = document.getElementById('topProgressBar');
+      if (bar) {
+        bar.classList.remove('indeterminate');
+        bar.style.width = '100%';
+        setTimeout(() => {
+          bar.classList.remove('active');
+          bar.style.width = '0%';
+        }, 220);
+      }
+      const tableBadge = document.getElementById('tableUpdatingBadge');
+      if (tableBadge) tableBadge.style.display = 'none';
+      const filterBadge = document.getElementById('filterUpdatingBadge');
+      if (filterBadge) filterBadge.style.display = 'none';
+      const tbl = document.getElementById('compareTableBody');
+      if (tbl) tbl.classList.remove('table-updating');
+    }
+
+    let filterDebounceTimer = null;
+    function debounceApplyFilters(delay = 120, customMsg = 'Filtrando...') {
+      showLoading(customMsg);
+      if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+      filterDebounceTimer = setTimeout(() => {
+        applyFiltersInternal();
+      }, delay);
+    }
+
+    function applyFilters() {
+      debounceApplyFilters(40, 'Filtrando...');
     }
 
     let rawComparisonList = [];
@@ -5110,13 +5382,15 @@ function setElText(id, val) {
 
     async function loadData() {
       try {
+        showLoading('Atualizando matriz...');
         const res = await fetch('/api/comparison');
         const data = await res.json();
         latestApiData = data;
         rawComparisonList = data.comparison;
-        applyFilters();
+        applyFiltersInternal();
       } catch(e) {
         console.error('Erro em loadData:', e);
+        hideLoading();
       }
     }
 
@@ -5290,7 +5564,7 @@ function setElText(id, val) {
       }
     }
 
-    function applyFilters() {
+    function applyFiltersInternal() {
       if (rawComparisonList) updatePleitosDropdown(rawComparisonList);
 
       const q = document.getElementById('searchInput').value.toLowerCase().trim();
@@ -5358,6 +5632,7 @@ function setElText(id, val) {
       }
 
       renderTable(sortData(filtered));
+      hideLoading();
     }
 
     // =====================================================================
