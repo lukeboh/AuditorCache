@@ -23,6 +23,7 @@ Sistema autônomo e contínuo de **auditoria forense, validação cronológica e
 11. [Topologia Flexível e Auditoria Multi-Nós (N-Vias)](#-topologia-flexível-e-auditoria-multi-nós-n-vias)
 12. [Decisões de Engenharia e Peculiaridades Técnicas](#-decisões-de-engenharia-e-peculiaridades-técnicas)
 13. [Estrutura do Repositório](#-estrutura-do-repositório)
+14. [Roadmap de Evoluções Futuras](ROADMAP.md)
 
 ---
 

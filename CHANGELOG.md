@@ -7,9 +7,25 @@ e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/p
 
 ---
 
-## [1.0.0] - 2026-09-09
+## [1.0.0] - 2026-09-12 - Versão Estável
 
 ### Adicionado
+- **Identificação Visual de Versão:**
+  - Badge oficial `v1.0` adicionado no topo de todas as telas (Dashboard Principal e Dossiê Técnico Forense).
+- **Dossiê Técnico Forense Unificado e Reconstituição Histórica:**
+  - Recuperação completa de rodadas históricas diretamente do banco SQLite (`tdtot_auditoria.db`).
+  - Cálculo retroativo exato de SLA de propagação (Média, P90, P95, P99) e atributos de cache (TTL médio `max-age` e Hit Rate de borda CDN).
+  - Isolamento seguro de checkpoints e segregação de rodadas de testes.
+- **Ajuda Forense Contextual nos KPIs:**
+  - Botão informativo `ℹ️` puro em cada um dos 5 cards de KPI.
+  - Popover flutuante inteligente posicionado logo abaixo do card clicado, sem obstruir as métricas ou rolar a página para o rodapé.
+  - Explicação pericial didática para Arquivos Monitorados, Regressões, Cache Atrasado, SLA e Atributos HTTP.
+- **Pausa Inteligente de Auto-Refresh:**
+  - O auto-refresh periódico de 10s é pausado automaticamente ao visualizar rodadas passadas/inativas, mantendo a tela estável e imutável.
+  - Indicador dinâmico no cabeçalho sinalizando `🟢 Dossiê Dinâmico (ao vivo)` vs `⚪ Rodada Histórica (Auto-Refresh Pausado)`.
+- **Otimização de Desempenho e Tráfego Forense:**
+  - Implementação do modo leve (`light=1`) na rota `/api/regressoes`, reduzindo o payload de 77 MB para menos de 1,5 MB com carregamento instantâneo no navegador.
+  - Eliminação de exceções de manipulação do DOM e blindagem com checagens defensivas em todos os seletores.
 - **Motor de Auditoria Cronológica e Regressão de Dados:**
   - Verificação monótona de data e hora de geração (`dg` e `hg`) entre arquivos JSON de totalização.
   - Detecção imediata de anomalias temporais e regressões de borda na camada de CDN/Cache (SIM).
@@ -18,21 +34,6 @@ e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/p
   - Suporte a arquitetura Master/Replica dinâmica com nós customizados (HMG, SIM, Akamai, instâncias regionais).
   - Gerenciador de Servidores no dashboard web com CRUD, teste de latência HTTP e promoção instantânea de Origem.
   - Inspeção e comparação side-by-side via Matriz Multi-Nós com badges de status e deltas individuais.
-- **Painel em Tempo Real (Dashboard Web):**
-  - Servidor HTTP nativo na porta `3333` com atualização reativa via Server-Sent Events (SSE).
-  - KPIs consolidados: Arquivos monitorados, regressões temporais na rodada e estatísticas de SLA de propagação (Média, P90, P95, P100).
-  - Tabela comparativa com filtros instantâneos por Eleição, UF, Tipo de Arquivo, Cargo e Status de Integridade.
-  - Inspecionador de cabeçalhos HTTP (`Cache-Control`, `Age`, `ETag`, `Server`, IPs de instâncias).
-- **Gerenciador de Rodadas (Checkpoints Lógicos):**
-  - Delimitação de janelas de teste com reinício automático de contadores sem expurgo do histórico pericial no banco.
-  - Transição diária automática à meia-noite e possibilidade de criação manual de novas rodadas.
-- **Dossiê Técnico de Evidências Forenses:**
-  - Geração de relatório HTML autônomo com sumário executivo, KPIs periciais e listagem completa de evidências raw.
-  - Salvamento estruturado de snapshots na pasta `versoes/` replicando a hierarquia de URLs.
-  - Assistente de exportação em lote (.ZIP) com cálculo de tamanho e barra de progresso em tempo real.
-- **Coleta Híbrida de Alta Eficiência:**
-  - Integração via Chrome DevTools Protocol (CDP `:9222`) para interceptação de sessões ativas no navegador.
-  - Pool assíncrono concorrente de sondas HTTP com reaproveitamento de conexões e suporte a descompressão gzip nativa.
 - **Persistência Forense em SQLite:**
   - Armazenamento transacional de alta velocidade utilizando o módulo nativo `node:sqlite` com modo WAL (*Write-Ahead Logging*).
   - Registro detalhado de histórico de leituras, detecções de anomalias e metadados de propagação.

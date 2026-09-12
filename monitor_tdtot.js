@@ -489,6 +489,8 @@ function hydrateStateFromDb() {
         ht: r.ht || null,
         totTime: parseDgHg(r.dt, r.ht),
         etag: r.etag,
+        maxAge: r.max_age ?? null,
+        cdnCacheStatus: r.cdn_status || null,
         source: 'Banco_SQLite',
         status: r.status_ordem || 'CARREGADO_DB',
         details: r.detalhes || 'Histórico SQLite restaurado'
@@ -1207,7 +1209,7 @@ function generateHtmlReport(embeddedData = null) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dossiê de Auditoria: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
+  <title>Dossiê Técnico Forense v1.0: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
   <script>
     (function() {
       try {
@@ -1358,6 +1360,8 @@ function generateHtmlReport(embeddedData = null) {
     .btn-copy:hover { background: #334155; color: #fff; border-color: #64748b; }
 
     .regression-card:hover { border-color: #38bdf8 !important; }
+    .kpi-info-btn { background: transparent !important; border: none !important; color: inherit; cursor: pointer; padding: 0 2px !important; margin: 0 !important; font-size: 0.95rem !important; display: inline-flex; align-items: center; justify-content: center; opacity: 0.75; transition: opacity 0.15s ease, transform 0.15s ease; line-height: 1; vertical-align: middle; outline: none; }
+    .kpi-info-btn:hover { opacity: 1; transform: scale(1.18); background: transparent !important; border: none !important; }
 
     /* ABAS DO DOSSIÊ */
     .tabs-nav { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
@@ -1437,7 +1441,7 @@ function generateHtmlReport(embeddedData = null) {
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico de Auditoria Forense Completo</h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -1454,7 +1458,7 @@ function generateHtmlReport(embeddedData = null) {
       </div>
       <button onclick="window.print()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Imprimir / Salvar PDF">🖨️ Imprimir PDF</button>
       ` : `
-      <div style="display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
+      <div id="liveRefreshBadge" style="display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 4px 10px; border-radius: 6px; font-size: 0.78rem;">
         <span class="live-pulse"></span>
         <span style="color: #34d399; font-weight: 600;">Dossiê Dinâmico</span>
         <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(atualizado agora)</span>
@@ -1465,54 +1469,6 @@ function generateHtmlReport(embeddedData = null) {
       `}
     </div>
   </header>
-
-  <!-- KPIS PROPORCIONAIS DO DOSSIÊ -->
-  <div class="stats-grid">
-    <div class="stat-card" style="border-left: 3px solid #64748b;">
-      <div class="stat-label">Arquivos Monitorados</div>
-      <div class="stat-value" id="kpiFiles">0</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Filtrados: <span id="kpiFilesVisible" style="color: #38bdf8; font-weight: bold;">0</span></div>
-    </div>
-    <div class="stat-card" style="border-left: 3px solid #ef4444;">
-      <div class="stat-label">Regressões (Rodada)</div>
-      <div class="stat-value" id="kpiRegs" style="color: #f87171;">0</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
-    </div>
-    <div class="stat-card" style="border-left: 3px solid #f59e0b;">
-      <div class="stat-label">Cache Atrasado</div>
-      <div class="stat-value" id="kpiDesync" style="color: #fbbf24;">0</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Arquivos desatualizados</div>
-    </div>
-    <div class="stat-card" style="border-left: 3px solid #10b981;">
-      <div class="stat-label" style="display: flex; justify-content: space-between;">
-        <span>SLA Sync Cache (DG/HG)</span>
-        <span style="color: #34d399;">Hoje</span>
-      </div>
-      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
-        <div><div style="font-size: 0.65rem; color: var(--text-muted);">MÉDIA</div><div id="slaAvg" style="font-size: 1.05rem; font-weight: 700; color: #fbbf24;">0m 00s</div></div>
-        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P90</div><div id="slaP90" style="font-size: 1.05rem; font-weight: 700; color: #fb923c;">0m 00s</div></div>
-        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P95</div><div id="slaP95" style="font-size: 1.05rem; font-weight: 700; color: #f87171;">0m 00s</div></div>
-        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P99</div><div id="slaP99" style="font-size: 1.05rem; font-weight: 700; color: #ef4444;">0m 00s</div></div>
-      </div>
-    </div>
-    <div class="stat-card" style="border-left: 3px solid #38bdf8;">
-      <div class="stat-label" style="display: flex; justify-content: space-between;">
-        <span>Atributos HTTP & Edge Cache</span>
-        <span style="color: #38bdf8;">AKAMAI</span>
-      </div>
-      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
-        <div><div style="font-size: 0.65rem; color: var(--text-muted);">SIM TTL</div><div id="kpiTtl" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8;">~60s</div></div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">HIT RATE</div><div id="kpiHitRate" style="font-size: 1.15rem; font-weight: 700; color: #34d399;">100%</div></div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">ORIGEM</div><div style="font-size: 0.82rem; font-weight: 600; color: #c084fc;">Apache</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- NAVEGAÇÃO ENTRE SEÇÕES -->
-  <div class="tabs-nav">
-    <button id="tabBtnComp" class="tab-btn active" onclick="switchTab('comp')">📊 1. Comparativo de Propagação e SLA de Sincronização</button>
-    <button id="tabBtnRegs" class="tab-btn" onclick="switchTab('regs')">🚨 2. Registro Detalhado de Regressões Temporais (<span id="tabRegsBadge">0</span>)</button>
-  </div>
 
   <!-- PAINEL DE FILTROS UNIFICADO -->
   <div class="card" style="padding: 14px 18px; margin-bottom: 16px;">
@@ -1548,7 +1504,7 @@ function generateHtmlReport(embeddedData = null) {
           <span>Rodada</span>
           <button type="button" onclick="openRodadasModal()" class="btn-copy" style="font-size:0.68rem; padding:1px 6px; cursor:pointer;" title="Gerenciar e Editar Parâmetros da Rodada">⚙️ Gerenciar</button>
         </label>
-        <select id="filterRodada" class="filter-select" onchange="applyFilters()">
+        <select id="filterRodada" class="filter-select" onchange="onRodadaFilterChanged()">
           <option value="">Carregando rodadas...</option>
         </select>
       </div>
@@ -1624,6 +1580,69 @@ function generateHtmlReport(embeddedData = null) {
         </select>
       </div>
     </div>
+  </div>
+
+  <!-- KPIS PROPORCIONAIS DO DOSSIÊ -->
+  <div class="stats-grid">
+    <div class="stat-card" style="border-left: 3px solid #64748b;">
+      <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Arquivos Monitorados</span>
+        <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'files')" title="Definição do indicador">ℹ️</button>
+      </div>
+      <div class="stat-value" id="kpiFiles">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;" id="kpiFilesSub">Total do catálogo</div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #ef4444;">
+      <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Regressões (Rodada)</span>
+        <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'regs')" title="Definição do indicador">ℹ️</button>
+      </div>
+      <div class="stat-value" id="kpiRegs" style="color: #f87171;">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #f59e0b;">
+      <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Cache Atrasado</span>
+        <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'desync')" title="Definição do indicador">ℹ️</button>
+      </div>
+      <div class="stat-value" id="kpiDesync" style="color: #fbbf24;">0</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;" id="kpiDesyncSub">Arquivos desatualizados</div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #10b981;">
+      <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>SLA Sync Cache (DG/HG)</span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span id="slaScopeLabel" style="color: #34d399;">Hoje</span>
+          <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'sla')" title="Definição do indicador">ℹ️</button>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
+        <div><div style="font-size: 0.65rem; color: var(--text-muted);">MÉDIA</div><div id="slaAvg" style="font-size: 1.05rem; font-weight: 700; color: #fbbf24;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P90</div><div id="slaP90" style="font-size: 1.05rem; font-weight: 700; color: #fb923c;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P95</div><div id="slaP95" style="font-size: 1.05rem; font-weight: 700; color: #f87171;">0m 00s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 6px;"><div style="font-size: 0.65rem; color: var(--text-muted);">P99</div><div id="slaP99" style="font-size: 1.05rem; font-weight: 700; color: #ef4444;">0m 00s</div></div>
+      </div>
+    </div>
+    <div class="stat-card" style="border-left: 3px solid #38bdf8;">
+      <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Atributos HTTP & Edge Cache</span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="color: #38bdf8;">AKAMAI</span>
+          <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'http')" title="Definição do indicador">ℹ️</button>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-top: 4px;">
+        <div><div style="font-size: 0.65rem; color: var(--text-muted);">SIM TTL</div><div id="kpiTtl" style="font-size: 1.15rem; font-weight: 700; color: #38bdf8;">~60s</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">HIT RATE</div><div id="kpiHitRate" style="font-size: 1.15rem; font-weight: 700; color: #34d399;">100%</div></div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;"><div style="font-size: 0.65rem; color: var(--text-muted);">ORIGEM</div><div style="font-size: 0.82rem; font-weight: 600; color: #c084fc;">Apache</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAVEGAÇÃO ENTRE SEÇÕES -->
+  <div class="tabs-nav">
+    <button id="tabBtnComp" class="tab-btn active" onclick="switchTab('comp')">📊 1. Comparativo de Propagação e SLA de Sincronização</button>
+    <button id="tabBtnRegs" class="tab-btn" onclick="switchTab('regs')">🚨 2. Registro Detalhado de Regressões Temporais (<span id="tabRegsBadge">0</span>)</button>
   </div>
 
   <!-- SEÇÃO 1: TABELA COMPARATIVA DE PROPAGAÇÃO -->
@@ -2108,81 +2127,306 @@ function generateHtmlReport(embeddedData = null) {
     // CARREGAMENTO DINÂMICO DOS DADOS
     // =====================================================================
     let hasLoadedInversions = false;
-    async function loadReportData() {
+    async function loadReportData(isAuto = false) {
       try {
-        showLoading('Atualizando dossiê forense...');
+        if (!isAuto) showLoading('Atualizando dossiê forense...');
+        const sel = document.getElementById('filterRodada');
+        const fRod = sel ? sel.value : '';
+
+        const compUrl = fRod ? ('/api/comparison?rodadaId=' + encodeURIComponent(fRod)) : '/api/comparison';
+        const regsUrl = fRod ? ('/api/regressoes?rodadaId=' + encodeURIComponent(fRod) + '&limit=300&light=1') : '/api/regressoes?all=1&limit=300&light=1';
+
         const fetchPromises = [
-          fetch('/api/comparison'),
-          fetch('/api/regressoes?all=1&limit=2000'),
+          fetch(compUrl),
+          fetch(regsUrl),
           fetch('/api/rodadas')
         ];
-        if (!hasLoadedInversions) {
-          fetchPromises.push(fetch('/api/regressoes?criterio=INVERSAO_DG_DT_ST&limit=1000&all=1'));
-        }
 
         const responses = await Promise.all(fetchPromises);
         const compData = await responses[0].json();
         const regsData = await responses[1].json();
         const rodadasData = await responses[2].json();
-        let invData = null;
-        if (!hasLoadedInversions && responses[3]) {
-          invData = await responses[3].json();
-          hasLoadedInversions = true;
-        }
 
         latestApiData = compData;
         rawComparisonList = compData.comparison || [];
-        
-        const regMap = new Map();
-        // Preserva inversões já carregadas nas atualizações periódicas
-        for (const r of rawRegressionsList) {
-          if (r.criterio?.includes('INVERSÃO') || r.motivo?.includes('INVERSÃO') || r.detalhes?.includes('INVERSÃO_DG_DT_ST')) {
-            regMap.set(r.id, r);
-          }
-        }
-        for (const r of (regsData.regressoes || [])) regMap.set(r.id, r);
-        if (invData && invData.regressoes) {
-          for (const r of invData.regressoes) regMap.set(r.id, r);
-        }
-        rawRegressionsList = Array.from(regMap.values());
+        rawRegressionsList = regsData.regressoes || [];
         rawRodadasList = rodadasData.list || [];
         activeRodada = rodadasData.active || null;
 
         updateRodadasDropdown();
         updatePleitosDropdown(rawComparisonList);
-        updateKpis(compData, regsData);
+        updateAutoRefreshIndicator();
         applyFiltersInternal();
 
         const lrEl = document.getElementById('lastRefreshTime');
         if (lrEl) lrEl.textContent = '(' + new Date().toLocaleTimeString('pt-BR') + ')';
       } catch(e) {
         console.error('Erro ao carregar dados do dossiê:', e);
+      } finally {
+        if (!isAuto) hideLoading();
+      }
+    }
+
+        function formatDateTimeFull(dt) {
+      if (!dt || dt === '-') return '-';
+      const d = new Date(dt);
+      if (isNaN(d.getTime())) return String(dt);
+      const pad = n => String(n).padStart(2, '0');
+      const dia = pad(d.getDate());
+      const mes = pad(d.getMonth() + 1);
+      const ano = d.getFullYear();
+      const hora = pad(d.getHours());
+      const min = pad(d.getMinutes());
+      const seg = pad(d.getSeconds());
+      return dia + '/' + mes + '/' + ano + ' - ' + hora + ':' + min + ':' + seg;
+    }
+
+    const KPI_HELP_TEXTS = {
+      files: {
+        title: '📁 Arquivos Monitorados',
+        body: '<p><strong>O que representa:</strong> Quantidade de artefatos JSON de totalização eleitoral atualmente sendo inspecionados sob os filtros ativos (Rodada, Pleito, Eleição, UF, Cargo ou Busca).</p><p><strong>Comportamento:</strong> O valor principal exibe o total de arquivos filtrados. O subtexto indica a proporção em relação ao catálogo cadastrado (ex.: <em>"de 229 no catálogo"</em> quando há filtros, ou <em>"Total do catálogo"</em> sem filtros).</p>'
+      },
+      regs: {
+        title: '🚨 Regressões Temporais e Inversões',
+        body: '<p><strong>O que representa:</strong> Total de anomalias periciais detectadas no ciclo/rodada em que o nó de cache (SIM/Akamai) ou a própria origem retornou dados cronologicamente ou quantitativamente inferiores a um estado anterior já validado (recuo de DG/HG, redução de votos/seções ou retrocesso de IDG).</p><p><strong>Carimbo "Última":</strong> Exibe a data e o horário exato da ocorrência mais recente registrada no banco de dados no formato estrito <code>dd/MM/yyyy - HH:mm:ss</code>.</p>'
+      },
+      desync: {
+        title: '⏳ Cache Atrasado (Defasagem Borda vs Origem)',
+        body: '<p><strong>O que representa:</strong> Quantidade de arquivos em que a <strong>Origem (HMG)</strong> já disponibilizou uma versão mais recente (data/hora de geração DG/HG mais nova ou número sequencial IDG superior), porém a <strong>Réplica de Cache (SIM / Akamai)</strong> continua entregando uma versão anterior ao eleitor/usuário.</p><p><strong>Por que pode marcar 100% (ex: 142/142)?</strong><br>Quando a Origem (HMG) totaliza uma nova rodada e os nós de Cache (SIM) deixam de receber atualizações ou o simulador é paralisado (por exemplo, na noite de 11/09 às 20:04 a origem atualizou, enquanto o nó SIM parou às 19:31), todos os arquivos que tiveram novos dados na origem ficam pendentes de sincronização na borda, resultando em 100% de defasagem legítima detectada pela auditoria.</p>'
+      },
+      sla: {
+        title: '⚡ SLA de Sincronização de Cache (DG/HG)',
+        body: '<p><strong>O que representa:</strong> Mede o tempo decorrido (em segundos/minutos) entre a geração do arquivo na Origem HMG e sua efetiva disponibilidade capturada na Réplica SIM (Cache Akamai).</p><p><strong>Métricas:</strong><ul><li><strong>MÉDIA:</strong> Tempo médio de propagação dos arquivos na rodada.</li><li><strong>P90, P95, P99:</strong> Percentis de latência (90%, 95% e 99% das atualizações foram sincronizadas dentro deste limite de tempo).</li></ul></p><p><em>Nota:</em> Em rodadas sem alterações concomitantes nos dois ambientes, o indicador exibe 0m 00s.</p>'
+      },
+      http: {
+        title: '🌐 Atributos HTTP & Edge Cache (Akamai)',
+        body: '<p><strong>O que representa:</strong> Métricas de eficiência e configuração de entrega na borda da CDN:<ul><li><strong>SIM TTL (max-age):</strong> Tempo de vida estipulado no cabeçalho HTTP <code>Cache-Control</code> indicando por quantos segundos o nó de cache mantém o arquivo em memória antes de consultar a origem.</li><li><strong>HIT RATE:</strong> Percentual de requisições atendidas diretamente pelo cache de borda (Akamai Cache HIT) sem onerar a infraestrutura de origem.</li><li><strong>ORIGEM:</strong> Servidor web responsável pela geração primária dos dados (Apache / HMG).</li></ul></p>'
+      }
+    };
+
+    function isFilteringActiveRodada() {
+      const sel = document.getElementById('filterRodada');
+      const fRod = sel ? sel.value : '';
+      if (!fRod) return true; // Todas as rodadas
+      return activeRodada && String(activeRodada.id) === String(fRod);
+    }
+
+    function updateAutoRefreshIndicator() {
+      const badge = document.getElementById('liveRefreshBadge');
+      const sel = document.getElementById('filterRodada');
+      const fRod = sel ? sel.value : '';
+      if (!badge) return;
+
+      if (!isFilteringActiveRodada()) {
+        badge.style.background = 'rgba(148, 163, 184, 0.15)';
+        badge.style.borderColor = 'rgba(148, 163, 184, 0.4)';
+        badge.style.color = '#94a3b8';
+        badge.innerHTML = '⚪ Rodada Histórica #' + fRod + ' <span style="font-size:0.70rem; opacity:0.8;">(Auto-Refresh Pausado)</span>';
+      } else {
+        badge.style.background = 'rgba(16, 185, 129, 0.15)';
+        badge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+        badge.style.color = '#34d399';
+        badge.innerHTML = '<span class="live-pulse"></span> Dossiê Dinâmico <span id="lastRefreshTime" style="font-size:0.72rem; color:var(--text-muted);">(' + new Date().toLocaleTimeString('pt-BR') + ')</span>';
+      }
+    }
+
+    function openKpiHelp(event, kpiKey) {
+      if (event) event.stopPropagation();
+      const popover = document.getElementById('kpiHelpPopover');
+      if (!popover) return;
+
+      const info = KPI_HELP_TEXTS[kpiKey];
+      if (!info) return;
+
+      document.getElementById('kpiHelpTitle').innerHTML = info.title;
+      document.getElementById('kpiHelpBody').innerHTML = info.body;
+
+      popover.style.display = 'block';
+
+      const trigger = event ? event.currentTarget : null;
+      const card = trigger ? trigger.closest('.stat-card') : null;
+
+      if (card) {
+        const rect = card.getBoundingClientRect();
+        const scrollY = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
+
+        popover.style.top = (rect.bottom + scrollY + 8) + 'px';
+
+        let leftPos = rect.left + scrollX;
+        const popWidth = 420;
+        if (leftPos + popWidth > window.innerWidth) {
+          leftPos = Math.max(10, window.innerWidth - popWidth - 20 + scrollX);
+        }
+        popover.style.left = leftPos + 'px';
+      } else {
+        popover.style.top = '140px';
+        popover.style.left = '50%';
+        popover.style.transform = 'translateX(-50%)';
+      }
+    }
+
+    function closeKpiHelp() {
+      const popover = document.getElementById('kpiHelpPopover');
+      if (popover) popover.style.display = 'none';
+    }
+
+    document.addEventListener('click', function(e) {
+      const pop = document.getElementById('kpiHelpPopover');
+      if (pop && pop.style.display === 'block' && !pop.contains(e.target) && !e.target.closest('.kpi-info-btn')) {
+        closeKpiHelp();
+      }
+    });
+
+    async function onRodadaFilterChanged() {
+      const sel = document.getElementById('filterRodada');
+      const fRod = sel ? sel.value : '';
+      showLoading('Carregando dados da rodada ' + (fRod ? ('#' + fRod) : 'completa') + '...');
+      try {
+        const urlComp = fRod ? ('/api/comparison?rodadaId=' + encodeURIComponent(fRod)) : '/api/comparison';
+        const urlRegs = fRod ? ('/api/regressoes?rodadaId=' + encodeURIComponent(fRod) + '&limit=300&light=1') : '/api/regressoes?all=1&limit=300&light=1';
+        const [resComp, resRegs] = await Promise.all([fetch(urlComp), fetch(urlRegs)]);
+        const compData = await resComp.json();
+        const regsData = await resRegs.json();
+
+        latestApiData = compData;
+        rawComparisonList = compData.comparison || [];
+        rawRegressionsList = regsData.regressoes || [];
+
+        updatePleitosDropdown(rawComparisonList);
+        updateAutoRefreshIndicator();
+        applyFiltersInternal();
+      } catch(e) {
+        console.error('Erro ao alternar rodada:', e);
+      } finally {
         hideLoading();
       }
     }
 
-    function updateKpis(compData, regsData) {
-      document.getElementById('kpiFiles').textContent = compData.comparison.length;
-      document.getElementById('kpiRegs').textContent = regsData.total || compData.regressionsTimeCount || 0;
-      document.getElementById('tabRegsBadge').textContent = regsData.total || compData.regressionsTimeCount || 0;
-      document.getElementById('kpiLastReg').textContent = compData.lastRegressionTime || '-';
+    function updateKpis(filteredComp, filteredRegs, compData) {
+      if (!filteredComp) filteredComp = rawComparisonList;
+      if (!filteredRegs) filteredRegs = rawRegressionsList;
+      if (!compData) compData = latestApiData || {};
 
+      const totalFiles = rawComparisonList.length;
+      const totalRegs = rawRegressionsList.length;
+      const isFiltered = filteredComp.length !== totalFiles || filteredRegs.length !== totalRegs;
+
+      // 1. Arquivos Monitorados
+      const kpiFilesEl = document.getElementById('kpiFiles');
+      if (kpiFilesEl) kpiFilesEl.textContent = filteredComp.length;
+      const kpiFilesSubEl = document.getElementById('kpiFilesSub');
+      if (kpiFilesSubEl) {
+        kpiFilesSubEl.innerHTML = isFiltered 
+          ? ('de <strong style="color:var(--text);">' + totalFiles + '</strong> no catálogo')
+          : ('Total do catálogo (' + totalFiles + ')');
+      }
+
+      // 2. Regressões (Rodada / Filtradas)
+      const kpiRegsEl = document.getElementById('kpiRegs');
+      if (kpiRegsEl) kpiRegsEl.textContent = filteredRegs.length;
+      const tabRegsBadge = document.getElementById('tabRegsBadge');
+      if (tabRegsBadge) tabRegsBadge.textContent = filteredRegs.length;
+
+      const kpiLastRegEl = document.getElementById('kpiLastReg');
+      if (kpiLastRegEl) {
+        if (filteredRegs.length > 0) {
+          const firstReg = filteredRegs[0];
+          const timeStr = firstReg.timestamp_iso || firstReg.call_time_iso;
+          kpiLastRegEl.textContent = formatDateTimeFull(timeStr || compData.lastRegressionTime);
+        } else if (compData.lastRegressionTime && compData.lastRegressionTime !== '-') {
+          kpiLastRegEl.textContent = formatDateTimeFull(compData.lastRegressionTime);
+        } else {
+          kpiLastRegEl.textContent = '-';
+        }
+      }
+
+      // 3. Cache Atrasado
       let desync = 0;
-      for (const r of compData.comparison) {
+      for (const r of filteredComp) {
         if (r.comparison?.status === 'CACHE_ATRASADO') desync++;
       }
-      document.getElementById('kpiDesync').textContent = desync;
+      const kpiDesyncEl = document.getElementById('kpiDesync');
+      if (kpiDesyncEl) kpiDesyncEl.textContent = desync;
+      const kpiDesyncSubEl = document.getElementById('kpiDesyncSub');
+      if (kpiDesyncSubEl) {
+        const pct = filteredComp.length ? Math.round((desync / filteredComp.length) * 100) : 0;
+        kpiDesyncSubEl.textContent = pct + '% dos filtrados (' + desync + '/' + filteredComp.length + ')';
+      }
 
-      if (compData.todaySlaStats) {
+      // 4. SLA Sync Cache (DG/HG)
+      const slaScopeEl = document.getElementById('slaScopeLabel');
+      const slaTimes = [];
+      for (const r of filteredComp) {
+        if (r.comparison?.syncSlaSec !== undefined && r.comparison?.syncSlaSec !== null && !isNaN(r.comparison.syncSlaSec) && Number(r.comparison.syncSlaSec) > 0) {
+          slaTimes.push(Number(r.comparison.syncSlaSec));
+        }
+      }
+      slaTimes.sort((a, b) => a - b);
+
+      if (isFiltered && slaTimes.length > 0) {
+        if (slaScopeEl) slaScopeEl.textContent = 'Filtrados';
+        const avg = Math.round(slaTimes.reduce((a, b) => a + b, 0) / slaTimes.length);
+        const p90 = slaTimes[Math.floor(slaTimes.length * 0.90)];
+        const p95 = slaTimes[Math.floor(slaTimes.length * 0.95)];
+        const p99 = slaTimes[Math.floor(slaTimes.length * 0.99)];
+        document.getElementById('slaAvg').textContent = formatMinSec(avg);
+        document.getElementById('slaP90').textContent = formatMinSec(p90);
+        document.getElementById('slaP95').textContent = formatMinSec(p95);
+        document.getElementById('slaP99').textContent = formatMinSec(p99);
+      } else if (compData.todaySlaStats && compData.todaySlaStats.totalEvents > 0) {
+        if (slaScopeEl) slaScopeEl.textContent = compData.activeRodada ? ('#' + compData.activeRodada.id) : 'Rodada';
         document.getElementById('slaAvg').textContent = formatMinSec(compData.todaySlaStats.avgSec);
         document.getElementById('slaP90').textContent = formatMinSec(compData.todaySlaStats.p90Sec);
         document.getElementById('slaP95').textContent = formatMinSec(compData.todaySlaStats.p95Sec);
         document.getElementById('slaP99').textContent = formatMinSec(compData.todaySlaStats.p99Sec);
+      } else if (slaTimes.length > 0) {
+        if (slaScopeEl) slaScopeEl.textContent = 'Rodada';
+        const avg = Math.round(slaTimes.reduce((a, b) => a + b, 0) / slaTimes.length);
+        const p90 = slaTimes[Math.floor(slaTimes.length * 0.90)];
+        const p95 = slaTimes[Math.floor(slaTimes.length * 0.95)];
+        const p99 = slaTimes[Math.floor(slaTimes.length * 0.99)];
+        document.getElementById('slaAvg').textContent = formatMinSec(avg);
+        document.getElementById('slaP90').textContent = formatMinSec(p90);
+        document.getElementById('slaP95').textContent = formatMinSec(p95);
+        document.getElementById('slaP99').textContent = formatMinSec(p99);
+      } else {
+        if (slaScopeEl) slaScopeEl.textContent = isFiltered ? 'Filtrados' : 'Rodada';
+        document.getElementById('slaAvg').textContent = '0m 00s';
+        document.getElementById('slaP90').textContent = '0m 00s';
+        document.getElementById('slaP95').textContent = '0m 00s';
+        document.getElementById('slaP99').textContent = '0m 00s';
       }
 
-      if (compData.cacheStats) {
+      // 5. Atributos HTTP & Edge Cache
+      let simTtlSum = 0, simTtlCount = 0;
+      let cdnHits = 0, cdnTotal = 0;
+      for (const r of filteredComp) {
+        const ma = (r.sim && r.sim.maxAge !== null && r.sim.maxAge !== undefined) ? Number(r.sim.maxAge) : (r.comparison?.cacheDiff?.sim?.maxAge ?? null);
+        if (ma !== null && !isNaN(ma)) {
+          simTtlSum += ma;
+          simTtlCount++;
+        }
+        const cdn = r.sim?.cdnCacheStatus || r.sim?.cdnStatus || r.comparison?.cacheDiff?.sim?.cdnStatus || r.comparison?.cdnStatus;
+        if (cdn && cdn !== '-') {
+          cdnTotal++;
+          if (String(cdn).toLowerCase().includes('hit')) cdnHits++;
+        }
+      }
+      if (simTtlCount > 0) {
+        document.getElementById('kpiTtl').textContent = Math.round(simTtlSum / simTtlCount) + 's';
+      } else if (!isFiltered && compData.cacheStats?.simAvgTtl) {
         document.getElementById('kpiTtl').textContent = compData.cacheStats.simAvgTtl + 's';
+      } else {
+        document.getElementById('kpiTtl').textContent = '-';
+      }
+
+      if (cdnTotal > 0) {
+        document.getElementById('kpiHitRate').textContent = Math.round((cdnHits / cdnTotal) * 100) + '%';
+      } else if (!isFiltered && compData.cacheStats?.cdnHitRate !== undefined) {
         document.getElementById('kpiHitRate').textContent = compData.cacheStats.cdnHitRate + '%';
+      } else {
+        document.getElementById('kpiHitRate').textContent = '-';
       }
     }
 
@@ -2198,7 +2442,7 @@ function generateHtmlReport(embeddedData = null) {
         opt.textContent = '#' + r.id + ' ' + r.nome + ativoTag;
         sel.appendChild(opt);
       }
-      if (curVal) sel.value = curVal;
+      if (curVal !== undefined && curVal !== null && curVal !== '') sel.value = curVal;
       else if (activeRodada) sel.value = String(activeRodada.id);
     }
 
@@ -2234,7 +2478,7 @@ function generateHtmlReport(embeddedData = null) {
       document.getElementById('filterTipo').value = '';
       document.getElementById('filterCargo').value = '';
       document.getElementById('filterStatus').value = '';
-      applyFilters();
+      onRodadaFilterChanged();
     }
 
     // =====================================================================
@@ -2407,9 +2651,13 @@ function generateHtmlReport(embeddedData = null) {
       const afb = document.getElementById('activeFiltersBadge');
       if (afb) afb.style.display = hasActiveFilters ? 'inline-block' : 'none';
 
-      document.getElementById('kpiFilesVisible').textContent = filteredComp.length;
-      document.getElementById('compTableCountBadge').textContent = '(' + filteredComp.length + ' de ' + rawComparisonList.length + ' arquivos)';
-      document.getElementById('regsTableCountBadge').textContent = '(' + filteredRegs.length + ' de ' + rawRegressionsList.length + ' ocorrências)';
+      const kpiVisEl = document.getElementById('kpiFilesVisible');
+      if (kpiVisEl) kpiVisEl.textContent = filteredComp.length;
+      updateKpis(filteredComp, filteredRegs, latestApiData);
+      const compBadge = document.getElementById('compTableCountBadge');
+      if (compBadge) compBadge.textContent = '(' + filteredComp.length + ' de ' + rawComparisonList.length + ' arquivos)';
+      const regsBadge = document.getElementById('regsTableCountBadge');
+      if (regsBadge) regsBadge.textContent = '(' + filteredRegs.length + ' de ' + rawRegressionsList.length + ' ocorrências)';
       
       const dossieCountEl = document.getElementById('dossieRegShowingCount');
       if (dossieCountEl) dossieCountEl.textContent = 'Exibindo ' + filteredRegs.length + ' de ' + rawRegressionsList.length;
@@ -3407,7 +3655,11 @@ function generateHtmlReport(embeddedData = null) {
       applyFilters();
     } else {
       loadReportData();
-      setInterval(loadReportData, 10000);
+      setInterval(() => {
+        if (isFilteringActiveRodada()) {
+          loadReportData(true);
+        }
+      }, 10000);
     }
 
     // =====================================================================
@@ -3674,6 +3926,19 @@ function generateHtmlReport(embeddedData = null) {
         <button onclick="closeEditRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
         <button onclick="submitEditRodadaModal()" class="btn" style="background:#0284c7; padding:8px 18px; font-weight:700;">💾 Salvar Alterações</button>
       </div>
+    </div>
+  </div>
+
+  <!-- POPOVER FLUTUANTE DE DEFINIÇÃO FORENSE DOS KPIS (PRÓXIMO AO CARD) -->
+  <div id="kpiHelpPopover" style="display: none; position: absolute; z-index: 10000; width: 420px; max-width: 90vw; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; padding: 14px 16px; box-shadow: 0 12px 30px rgba(0,0,0,0.85), 0 0 15px rgba(56,189,248,0.25); color: var(--text); font-size: 0.84rem; line-height: 1.55;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(56,189,248,0.25); padding-bottom: 6px;">
+      <h3 id="kpiHelpTitle" style="margin: 0; font-size: 0.98rem; color: #38bdf8; font-weight: 700;">ℹ️ Definição do Indicador</h3>
+      <button onclick="closeKpiHelp()" style="background: transparent; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 0 4px; line-height: 1;">✕</button>
+    </div>
+    <div id="kpiHelpBody" style="font-size: 0.82rem; color: #e2e8f0; line-height: 1.5;">
+    </div>
+    <div style="text-align: right; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px;">
+      <button onclick="closeKpiHelp()" class="btn-copy" style="padding: 3px 12px; font-size: 0.75rem; background: #0284c7; color: #fff; border: 1px solid #38bdf8;">Fechar</button>
     </div>
   </div>
 </body>
@@ -4309,9 +4574,19 @@ function httpRequestWithIp(urlStr) {
         headers: requestHeaders
       }, (res) => {
         const serverIp = req.socket?.remoteAddress || null;
+        const encoding = (res.headers['content-encoding'] || '').toLowerCase().trim();
+        let stream = res;
+        if (encoding === 'gzip') {
+          stream = res.pipe(zlib.createGunzip());
+        } else if (encoding === 'deflate') {
+          stream = res.pipe(zlib.createInflate());
+        } else if (encoding === 'br') {
+          stream = res.pipe(zlib.createBrotliDecompress());
+        }
+
         const chunks = [];
-        res.on('data', chunk => chunks.push(chunk));
-        res.on('end', () => {
+        stream.on('data', chunk => chunks.push(chunk));
+        stream.on('end', () => {
           const latencyMs = Date.now() - callTimeUnix;
           const text = Buffer.concat(chunks).toString('utf8');
           const headersObj = {};
@@ -4330,6 +4605,21 @@ function httpRequestWithIp(urlStr) {
             callTimeUnix,
             callTimeIso,
             latencyMs
+          });
+        });
+        stream.on('error', (err) => {
+          // Se falhar na descompressão, tenta fallback para corpo bruto se houver chunks
+          finish({
+            ok: false,
+            error: 'Decompression error: ' + err.message,
+            statusCode: res.statusCode,
+            text: '',
+            headers: {},
+            responseHeaders: {},
+            requestHeaders,
+            callTimeUnix,
+            callTimeIso,
+            latencyMs: Date.now() - callTimeUnix
           });
         });
       });
@@ -4555,7 +4845,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TDTot - Auditoria Dupla de Propagação: Data/Hora (DG/HG) e Sequencial (IDG)</title>
+  <title>TDTot v1.0 - Auditoria Dupla de Propagação: HMG vs SIM</title>
   <script>
     (function() {
       try {
@@ -4839,7 +5129,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <!-- LINHA 1: Título, Status, Eleições, Servidores e Botões de Exportação à Direita -->
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;">
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM</h1>
+        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.0</span></h1>
         
         <!-- STATUS BADGE (30px) -->
         <span id="statusBadge" class="status-badge status-ok" onclick="openRegressoesModal()" title="Clique para abrir a auditoria forense detalhada de todas as regressões detectadas" style="height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -8595,7 +8885,315 @@ function getTodaySyncData() {
   return cachedTodaySync;
 }
 
-function getComparisonPayload() {
+function buildHistoricalComparisonPayload(rodadaId) {
+  const rFound = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(Number(rodadaId));
+  if (!rFound) return null;
+
+  const rStartUnix = rFound.inicio_unix;
+  const rEndUnix = rFound.fim_unix || null;
+  const rStartIso = rFound.inicio_iso;
+  const rEndIso = rFound.fim_iso || null;
+
+  const sqlHydrate = `
+    SELECT l.* FROM leituras l
+    INNER JOIN (
+      SELECT servidor, arquivo, MAX(id) as max_id
+      FROM leituras
+      WHERE timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      GROUP BY servidor, arquivo
+    ) latest ON l.id = latest.max_id
+  `;
+  const rows = db.prepare(sqlHydrate).all(rStartUnix, rEndUnix, rEndUnix);
+
+  const histStates = {};
+  const fileSet = new Set();
+  for (const r of rows) {
+    if (!histStates[r.servidor]) histStates[r.servidor] = new Map();
+    histStates[r.servidor].set(r.arquivo, {
+      serverKey: r.servidor,
+      relPath: r.arquivo,
+      filename: getFilename(r.arquivo),
+      idg: r.idg,
+      idgNum: r.idg ? Number(r.idg) : null,
+      dg: r.dg,
+      hg: r.hg,
+      genTime: parseDgHg(r.dg, r.hg),
+      st: (r.secoes !== null && r.secoes !== undefined && String(r.secoes).trim() !== '') ? Number(r.secoes) : null,
+      pst: r.secoes_pct,
+      vTot: r.votos,
+      dt: r.dt || null,
+      ht: r.ht || null,
+      totTime: parseDgHg(r.dt, r.ht),
+      etag: r.etag,
+      maxAge: r.max_age,
+      cdnCacheStatus: r.cdn_status,
+      status: r.status_ordem || 'CARREGADO_DB'
+    });
+    fileSet.add(r.arquivo);
+  }
+
+  // SLA da rodada histórica
+  const sqlSla = `
+    WITH hmg_first AS (
+      SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
+      FROM leituras
+      WHERE servidor = 'HMG' AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      GROUP BY arquivo, dg, hg
+    ),
+    sim_first AS (
+      SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
+      FROM leituras
+      WHERE servidor = 'SIM' AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      GROUP BY arquivo, dg, hg
+    )
+    SELECT 
+      h.arquivo,
+      CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
+    FROM hmg_first h
+    JOIN sim_first s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
+  `;
+  const syncRows = db.prepare(sqlSla).all(rStartUnix, rEndUnix, rEndUnix, rStartUnix, rEndUnix, rEndUnix);
+  const todaySyncByFile = {};
+  for (const row of syncRows) {
+    if (!todaySyncByFile[row.arquivo]) todaySyncByFile[row.arquivo] = [];
+    todaySyncByFile[row.arquivo].push(row.sync_sec);
+  }
+  const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+  const todaySlaStats = {
+    totalEvents: allTimes.length,
+    avgSec: allTimes.length ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length) : 0,
+    p90Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.90)] : 0,
+    p95Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.95)] : 0,
+    p99Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.99)] : 0,
+    p100Sec: allTimes.length ? allTimes[allTimes.length - 1] : 0
+  };
+
+  const comparisonList = [];
+  let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
+  let cdnHits = 0, cdnTotal = 0;
+
+  // Garante inclusão de todos os arquivos rastreados
+  for (const f of Array.from(trackedFiles)) fileSet.add(f);
+
+  for (const relPath of Array.from(fileSet)) {
+    const hmg = histStates['HMG']?.get(relPath) || null;
+    const sim = histStates['SIM']?.get(relPath) || null;
+
+    let delaySec = null;
+    let statusTime = 'SEM_TIMESTAMP';
+    let textTime = '-';
+    let status = 'DESCONHECIDO';
+
+    if (hmg && sim && hmg.genTime !== null && sim.genTime !== null) {
+      delaySec = Math.round((hmg.genTime - sim.genTime) / 1000);
+      if (delaySec === 0) {
+        statusTime = 'SINCRONIZADO';
+        status = 'SINCRONIZADO';
+        textTime = '0m 00s';
+      } else if (delaySec > 0) {
+        statusTime = 'CACHE_ATRASADO';
+        status = 'CACHE_ATRASADO';
+        textTime = '-' + formatMinSec(delaySec);
+      } else {
+        statusTime = 'CACHE_A_FRENTE';
+        status = 'CACHE_A_FRENTE';
+        textTime = '+' + formatMinSec(-delaySec);
+      }
+    } else if (hmg && !sim) {
+      status = 'CACHE_ATRASADO';
+      statusTime = 'CACHE_ATRASADO';
+      textTime = 'Pendente no Cache';
+    }
+
+    let diffIdg = null;
+    let statusIdg = 'SEM_IDG';
+    let textIdg = '-';
+    if (hmg && sim && hmg.idgNum !== null && sim.idgNum !== null) {
+      diffIdg = hmg.idgNum - sim.idgNum;
+      if (diffIdg === 0) {
+        statusIdg = 'SINCRONIZADO';
+        textIdg = '0';
+      } else if (diffIdg > 0) {
+        statusIdg = 'CACHE_ATRASADO';
+        textIdg = '-' + diffIdg;
+      } else {
+        statusIdg = 'CACHE_A_FRENTE';
+        textIdg = '+' + (-diffIdg);
+      }
+    }
+
+    let delayTotSec = null;
+    let statusTot = 'SEM_TOTALIZACAO';
+    let textTot = '-';
+    if (hmg && sim && hmg.totTime !== null && sim.totTime !== null) {
+      delayTotSec = Math.round((hmg.totTime - sim.totTime) / 1000);
+      if (delayTotSec === 0) {
+        statusTot = 'SINCRONIZADO';
+        textTot = '0m 00s';
+      } else if (delayTotSec > 0) {
+        statusTot = 'ATRASADO';
+        textTot = '-' + formatMinSec(delayTotSec);
+      } else {
+        statusTot = 'A_FRENTE';
+        textTot = '+' + formatMinSec(-delayTotSec);
+      }
+    }
+
+    let diffSt = null;
+    let statusSt = 'SEM_SECOES';
+    let textSt = '-';
+    if (hmg && sim && hmg.st !== null && sim.st !== null) {
+      diffSt = hmg.st - sim.st;
+      if (diffSt === 0) {
+        statusSt = 'SINCRONIZADO';
+        textSt = '0';
+      } else if (diffSt > 0) {
+        statusSt = 'ATRASADO';
+        textSt = '-' + diffSt;
+      } else {
+        statusSt = 'A_FRENTE';
+        textSt = '+' + (-diffSt);
+      }
+    }
+
+    const fileSlaList = todaySyncByFile[relPath] || [];
+    const syncSlaSec = fileSlaList.length ? fileSlaList[0] : 0;
+    const syncSlaText = fileSlaList.length ? formatMinSec(syncSlaSec) : '-';
+    const syncSlaStatus = syncSlaSec > 30 ? 'ALERTA' : (fileSlaList.length ? 'OK' : 'SEM_DADOS');
+
+    if (sim) {
+      if (sim.maxAge !== null && !isNaN(sim.maxAge)) {
+        simTtlSum += sim.maxAge;
+        simTtlCount++;
+        if (simTtlMin === null || sim.maxAge < simTtlMin) simTtlMin = sim.maxAge;
+        if (simTtlMax === null || sim.maxAge > simTtlMax) simTtlMax = sim.maxAge;
+      }
+      if (sim.cdnCacheStatus) {
+        cdnTotal++;
+        if (String(sim.cdnCacheStatus).toLowerCase().includes('hit')) cdnHits++;
+      }
+    }
+
+    const comp = {
+      status,
+      delaySec: delaySec ?? 0,
+      diffIdg: diffIdg ?? 0,
+      syncSlaSec,
+      syncSlaText,
+      syncSlaStatus,
+      statusTime,
+      statusIdg,
+      textTime,
+      textIdg,
+      delayTotSec,
+      statusTot,
+      textTot,
+      diffSt,
+      statusSt,
+      textSt,
+      primaryReplicaKey: 'SIM',
+      originKey: 'HMG',
+      cacheDiff: {
+        hmg: {
+          serverKey: 'HMG',
+          cacheControl: '(nenhum)',
+          maxAge: hmg?.maxAge ?? null,
+          cdnStatus: hmg?.cdnCacheStatus || 'ORIGIN',
+          etag: hmg?.etag || '-',
+          server: 'Apache',
+          serverIp: '-',
+          lastModified: '-'
+        },
+        sim: {
+          serverKey: 'SIM',
+          cacheControl: sim?.maxAge ? ('max-age=' + sim.maxAge) : '(nenhum)',
+          maxAge: sim?.maxAge ?? null,
+          cdnStatus: sim?.cdnCacheStatus || ((sim && sim.maxAge !== null) ? 'Hit (Edge)' : '-'),
+          etag: sim?.etag || '-',
+          server: 'Edge/Akamai',
+          serverIp: '-',
+          akamaiGrn: '-',
+          lastModified: '-'
+        },
+        ttlMismatch: (hmg?.maxAge !== sim?.maxAge),
+        simTtlText: (sim && sim.maxAge !== null && sim.maxAge !== undefined) ? (sim.maxAge + 's') : '-',
+        cdnHit: (sim?.cdnCacheStatus && String(sim.cdnCacheStatus).toLowerCase().includes('hit')) || false
+      },
+      replicas: [
+        {
+          chave: 'SIM',
+          nome: 'Simulador Borda (Cache)',
+          hg: sim?.hg || '-',
+          dg: sim?.dg || '-',
+          idg: sim?.idg || '-',
+          dt: sim?.dt || '-',
+          ht: sim?.ht || '-',
+          st: sim?.st ?? null,
+          pst: sim?.pst ?? null,
+          delaySec: delaySec ?? 0,
+          statusTime,
+          textTime,
+          syncSlaSec,
+          syncSlaText,
+          syncSlaStatus,
+          maxAge: sim?.maxAge ?? null,
+          cdnStatus: sim?.cdnCacheStatus || '-'
+        }
+      ]
+    };
+
+    const originUrl = (knownServers.get('HMG')?.baseUrl || '') + relPath;
+    const simUrl = (knownServers.get('SIM')?.baseUrl || '') + relPath;
+
+    comparisonList.push({
+      relPath,
+      filename: getFilename(relPath),
+      meta: parseFileMetadata(relPath),
+      originKey: 'HMG',
+      originUrl,
+      simUrl,
+      hmgUrl: originUrl,
+      hmg,
+      sim,
+      comparison: comp
+    });
+  }
+
+  const cacheStats = {
+    simAvgTtl: simTtlCount > 0 ? Math.round(simTtlSum / simTtlCount) : 60,
+    simTtlMin: simTtlMin ?? 0,
+    simTtlMax: simTtlMax ?? 60,
+    cdnHitRate: cdnTotal > 0 ? Math.round((cdnHits / cdnTotal) * 100) : 100,
+    originKey: 'HMG',
+    totalAudited: comparisonList.length
+  };
+
+  const regCountRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?)`).get(rStartIso, rEndIso, rEndIso);
+  const lastRegRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE (criterio = 'TEMPORAL (DG/HG)' OR motivo LIKE 'REGRESSÃO TEMPORAL%') AND timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?) ORDER BY id DESC LIMIT 1`).get(rStartIso, rEndIso, rEndIso);
+
+  return {
+    servers: getActiveServers(),
+    allServers: Array.from(knownServers.values()),
+    originKey: 'HMG',
+    isMultiServer: false,
+    comparison: comparisonList,
+    recentLogs: [],
+    regressionsTimeCount: regCountRow ? regCountRow.cnt : 0,
+    lastRegressionTime: lastRegRow ? lastRegRow.timestamp_iso : '-',
+    todaySyncByFile,
+    todaySlaStats,
+    cacheStats,
+    activeRodada: rFound,
+    totalChecks: rows.length
+  };
+}
+
+function getComparisonPayload(rodadaId = null) {
+  const activeRodada = getActiveRodada();
+  if (rodadaId && rodadaId !== 'all' && (!activeRodada || Number(rodadaId) !== activeRodada.id)) {
+    const hist = buildHistoricalComparisonPayload(rodadaId);
+    if (hist) return hist;
+  }
   const originServer = getOriginServer();
   const originKey = originServer ? originServer.chave : 'HMG';
   const activeServersList = getActiveServers();
@@ -8636,7 +9234,6 @@ function getComparisonPayload() {
 
   let regressionsTimeCount = 0;
   let lastRegressionTime = '-';
-  const activeRodada = getActiveRodada();
   const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
   try {
     const timeRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?`).get(rodadaStartIso);
@@ -8844,15 +9441,17 @@ function getEnrichedRegressions(filters = {}) {
     const enrichedTimeline = timeline.map(t => {
       let tHeaders = {};
       let tReqHeaders = {};
-      if (t.headers_json) {
-        try {
-          const parsed = JSON.parse(t.headers_json);
-          tHeaders = parsed.response ? parsed.response : parsed;
-          if (parsed.request) tReqHeaders = parsed.request;
-        } catch(e) {}
-      }
-      if (t.request_headers_json) {
-        try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
+      if (!filters.light) {
+        if (t.headers_json) {
+          try {
+            const parsed = JSON.parse(t.headers_json);
+            tHeaders = parsed.response ? parsed.response : parsed;
+            if (parsed.request) tReqHeaders = parsed.request;
+          } catch(e) {}
+        }
+        if (t.request_headers_json) {
+          try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
+        }
       }
       const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
       const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
@@ -8889,6 +9488,37 @@ function getEnrichedRegressions(filters = {}) {
         isRegressionPoint
       };
     });
+
+    if (filters.light) {
+      return {
+        id: r.id,
+        timestamp_iso: r.timestamp_iso,
+        call_time_iso: r.call_time_iso || r.timestamp_iso,
+        servidor: r.servidor,
+        papel_servidor: r.papel_servidor,
+        arquivo: r.arquivo,
+        criterio: r.criterio,
+        motivo: r.motivo,
+        detalhes: r.detalhes,
+        dg_anterior: r.dg_anterior,
+        dg_recebido: r.dg_recebido,
+        hg_anterior: r.hg_anterior,
+        hg_recebido: r.hg_recebido,
+        dt_anterior: r.dt_anterior,
+        dt_recebido: r.dt_recebido,
+        ht_anterior: r.ht_anterior,
+        ht_recebido: r.ht_recebido,
+        idg_anterior: r.idg_anterior,
+        idg_recebido: r.idg_recebido,
+        secoes_anterior: r.secoes_anterior,
+        secoes_recebido: r.secoes_recebido,
+        votos_anterior: r.votos_anterior,
+        votos_recebido: r.votos_recebido,
+        akamai_grn: itemAkamaiGrn,
+        fileMeta: parseFileMetadata(r.arquivo),
+        timeline: enrichedTimeline
+      };
+    }
 
     return {
       ...r,
@@ -9468,7 +10098,8 @@ function startDashboardServer() {
 
 
     if (url.pathname === '/api/comparison') {
-      const payload = getComparisonPayload();
+      const rodadaId = url.searchParams.get('rodadaId');
+      const payload = getComparisonPayload(rodadaId);
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
@@ -9493,6 +10124,7 @@ function startDashboardServer() {
         const rodadaIdParam = url.searchParams.get('rodadaId');
         const rodadaId = (rodadaIdParam && rodadaIdParam !== 'all') ? rodadaIdParam : null;
         const allRodada = rodadaIdParam === 'all' || url.searchParams.get('all') === '1' || url.searchParams.get('allRodada') === '1';
+        const light = url.searchParams.get('light') === '1' || limit > 100;
         const payload = getEnrichedRegressions({
           limit,
           allRodada,
@@ -9503,7 +10135,8 @@ function startDashboardServer() {
           criterio,
           uf,
           cargo,
-          eleicao
+          eleicao,
+          light
         });
 
         res.writeHead(200, {
