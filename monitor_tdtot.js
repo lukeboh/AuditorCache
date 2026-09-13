@@ -93,9 +93,7 @@ function initRodadas() {
     const todayMidnight = getTodayMidnightUnix();
 
     if (!row || row.inicio_unix < todayMidnight) {
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('pt-BR');
-      const nome = !row ? 'Rodada Inicial - ' + dateStr : 'Rodada do Dia - ' + dateStr;
+      const nome = !row ? 'Rodada Inicial' : 'Rodada do Dia';
       
       const inicioUnix = todayMidnight;
       const inicioIso = new Date(inicioUnix).toISOString();
@@ -137,9 +135,7 @@ function getActiveRodada() {
 
 function createNewRodada(customName, customInicioUnix = null) {
   const now = new Date();
-  const dateStr = now.toLocaleDateString('pt-BR');
-  const timeStr = now.toLocaleTimeString('pt-BR');
-  const nome = customName && customName.trim() ? customName.trim() : ('Nova Rodada - ' + dateStr + ' ' + timeStr);
+  const nome = customName && customName.trim() ? customName.trim() : 'Nova Rodada';
   const inicioUnix = customInicioUnix ? Number(customInicioUnix) : now.getTime();
   const inicioIso = new Date(inicioUnix).toISOString();
 
@@ -1441,7 +1437,7 @@ function generateHtmlReport(embeddedData = null) {
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0</span></h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.1</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -2439,7 +2435,8 @@ function generateHtmlReport(embeddedData = null) {
         const opt = document.createElement('option');
         opt.value = String(r.id);
         const ativoTag = r.ativo ? ' [ATIVA]' : '';
-        opt.textContent = '#' + r.id + ' ' + r.nome + ativoTag;
+        const dtStr = r.inicio_unix ? (' (' + formatDateTimeFull(r.inicio_unix) + ')') : '';
+        opt.textContent = '#' + r.id + ' ' + r.nome + dtStr + ativoTag;
         sel.appendChild(opt);
       }
       if (curVal !== undefined && curVal !== null && curVal !== '') sel.value = curVal;
@@ -5129,7 +5126,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <!-- LINHA 1: Título, Status, Eleições, Servidores e Botões de Exportação à Direita -->
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;">
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.0</span></h1>
+        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.0.1</span></h1>
         
         <!-- STATUS BADGE (30px) -->
         <span id="statusBadge" class="status-badge status-ok" onclick="openRegressoesModal()" title="Clique para abrir a auditoria forense detalhada de todas as regressões detectadas" style="height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -6803,8 +6800,8 @@ function setElText(id, val) {
       if (!el) return;
       if (active) {
         const d = new Date(active.inicio_unix);
-        const time = d.toLocaleTimeString('pt-BR');
-        el.innerHTML = '<span style="color:#10b981; font-weight:700;">' + active.nome + '</span> <span style="font-size:0.72rem; color:#94a3b8;">(início ' + time + ')</span>';
+        const dtStr = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR');
+        el.innerHTML = '<span style="color:#10b981; font-weight:700;">' + active.nome + '</span> <span style="font-size:0.72rem; color:#94a3b8;">(início ' + dtStr + ')</span>';
       } else {
         el.innerText = 'Sem rodada ativa';
       }

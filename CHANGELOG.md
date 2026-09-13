@@ -7,6 +7,14 @@ e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/p
 
 ---
 
+## [1.0.1] - 2026-09-12
+
+### Modificado
+- **Identificação Cronológica em Combos de Rodada:**
+  - As caixas de seleção de rodadas no Dossiê (`/report`) agora exibem o nome da rodada concatenado com a respectiva data e hora de início (`dd/MM/yyyy HH:mm:ss`), com destaque para a rodada `[ATIVA]`.
+  - Migração e saneamento dos nomes de todas as rodadas existentes no banco de dados, removendo redundâncias de data/hora inseridas no texto do nome.
+  - Atualização do gerador automático de rodadas diárias e manuais para nomes limpos e padronizados.
+
 ## [1.0.0] - 2026-09-12 - Versão Estável
 
 ### Adicionado
