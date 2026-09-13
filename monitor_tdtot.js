@@ -188,6 +188,135 @@ function deleteRodada(id) {
   }
 }
 
+function getPurgeRodadaPreview(id) {
+  const numId = Number(id);
+  const r = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(numId);
+  if (!r) return null;
+
+  const isActive = Boolean(r.ativo) || (currentActiveRodada && currentActiveRodada.id === numId);
+  const rStartUnix = r.inicio_unix;
+  const rEndUnix = r.fim_unix || null;
+  const rStartIso = r.inicio_iso;
+  const rEndIso = r.fim_iso || null;
+
+  const leiturasCnt = db.prepare('SELECT COUNT(*) as cnt FROM leituras WHERE timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)').get(rStartUnix, rEndUnix, rEndUnix).cnt;
+  const regRows = db.prepare('SELECT id, evidencia_raw_path FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?)').all(rStartIso, rEndIso, rEndIso);
+  const regressoesCnt = regRows.length;
+
+  let existingEvidencias = 0;
+  let totalBytesEvidencias = 0;
+  const resolvedEvidDir = path.resolve(EVIDENCIAS_DIR);
+
+  for (const reg of regRows) {
+    if (reg.evidencia_raw_path) {
+      const p = path.resolve(reg.evidencia_raw_path);
+      if (p.startsWith(resolvedEvidDir) && fs.existsSync(p)) {
+        try {
+          const st = fs.statSync(p);
+          existingEvidencias++;
+          totalBytesEvidencias += st.size;
+        } catch {}
+      }
+    }
+  }
+
+  let dbSizeMB = 0;
+  try {
+    const dbStat = fs.statSync(DB_FILE);
+    dbSizeMB = Number((dbStat.size / (1024 * 1024)).toFixed(2));
+  } catch {}
+
+  return {
+    id: r.id,
+    nome: r.nome,
+    inicio_iso: r.inicio_iso,
+    fim_iso: r.fim_iso,
+    inicio_unix: r.inicio_unix,
+    fim_unix: r.fim_unix,
+    ativo: isActive,
+    leituras: leiturasCnt,
+    regressoes: regressoesCnt,
+    arquivosEvidencia: existingEvidencias,
+    tamanhoEvidenciasMB: Number((totalBytesEvidencias / (1024 * 1024)).toFixed(2)),
+    dbSizeMB
+  };
+}
+
+function purgeRodada(id) {
+  const numId = Number(id);
+  const r = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(numId);
+  if (!r) throw new Error('Rodada não encontrada.');
+
+  const isActive = Boolean(r.ativo) || (currentActiveRodada && currentActiveRodada.id === numId);
+  if (isActive) {
+    throw new Error('Operação Recusada: A rodada atualmente ativa não pode ser expurgada.');
+  }
+
+  const rStartUnix = r.inicio_unix;
+  const rEndUnix = r.fim_unix || null;
+  const rStartIso = r.inicio_iso;
+  const rEndIso = r.fim_iso || null;
+
+  let dbSizeBeforeMB = 0;
+  try {
+    const stBefore = fs.statSync(DB_FILE);
+    dbSizeBeforeMB = Number((stBefore.size / (1024 * 1024)).toFixed(2));
+  } catch {}
+
+  // 1. Coleta e remoção cirúrgica de arquivos físicos individuais de evidência
+  const resolvedEvidDir = path.resolve(EVIDENCIAS_DIR);
+  let filesRemoved = 0;
+
+  const regRows = db.prepare('SELECT evidencia_raw_path FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?)').all(rStartIso, rEndIso, rEndIso);
+  for (const reg of regRows) {
+    if (reg.evidencia_raw_path) {
+      const p = path.resolve(reg.evidencia_raw_path);
+      if (p.startsWith(resolvedEvidDir) && fs.existsSync(p)) {
+        try {
+          fs.unlinkSync(p);
+          filesRemoved++;
+        } catch (err) {
+          console.error(`Falha ao remover arquivo de evidência ${p}:`, err.message);
+        }
+      }
+    }
+  }
+
+  // 2. Expurgo em banco de dados das tabelas leituras, regressoes e rodadas
+  const delLeituras = db.prepare('DELETE FROM leituras WHERE timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)').run(rStartUnix, rEndUnix, rEndUnix);
+  const delRegressoes = db.prepare('DELETE FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?)').run(rStartIso, rEndIso, rEndIso);
+  db.prepare('DELETE FROM rodadas WHERE id = ?').run(numId);
+
+  // 3. Sincronizar encadeamento de datas das rodadas remanescentes
+  syncRodadasChain();
+
+  // 4. Executar VACUUM para recuperar fisicamente o espaço em disco do SQLite
+  try {
+    db.exec('VACUUM;');
+  } catch (vErr) {
+    console.warn('Aviso: Erro ao executar VACUUM:', vErr.message);
+  }
+
+  let dbSizeAfterMB = 0;
+  try {
+    const stAfter = fs.statSync(DB_FILE);
+    dbSizeAfterMB = Number((stAfter.size / (1024 * 1024)).toFixed(2));
+  } catch {}
+
+  console.log(`🧹 [PURGE CONCLUÍDO] Rodada #${numId} "${r.nome}" expurgada: ${delLeituras.changes} leituras, ${delRegressoes.changes} regressões, ${filesRemoved} arquivos físicos. Banco: ${dbSizeBeforeMB}MB -> ${dbSizeAfterMB}MB`);
+
+  return {
+    ok: true,
+    rodadaId: numId,
+    nome: r.nome,
+    leiturasExcluidas: delLeituras.changes,
+    regressoesExcluidas: delRegressoes.changes,
+    arquivosRemovidos: filesRemoved,
+    dbSizeBeforeMB,
+    dbSizeAfterMB
+  };
+}
+
 // =====================================================================
 // DDL DO BANCO DE DADOS E TABELAS
 // =====================================================================
@@ -1437,7 +1566,7 @@ function generateHtmlReport(embeddedData = null) {
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.1</span></h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.1.0</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -3726,8 +3855,14 @@ function generateHtmlReport(embeddedData = null) {
         btnDel.className = 'btn-copy';
         btnDel.style.color = '#ef4444';
         btnDel.innerText = '🗑️';
-        btnDel.title = 'Excluir marco desta rodada';
-        btnDel.onclick = () => deleteRodadaPrompt(r.id);
+        btnDel.title = isActive ? 'A rodada ativa não pode ser expurgada' : 'Expurgo Forense: excluir rodada, leituras, regressões e evidências';
+        if (isActive) {
+          btnDel.style.opacity = '0.35';
+          btnDel.style.cursor = 'not-allowed';
+          btnDel.onclick = () => alert('A rodada atualmente ativa não pode ser expurgada.');
+        } else {
+          btnDel.onclick = () => openPurgeRodadaModal(r.id);
+        }
         actions.appendChild(btnDel);
 
         item.appendChild(actions);
@@ -3839,15 +3974,108 @@ function generateHtmlReport(embeddedData = null) {
       }
     }
 
-    async function deleteRodadaPrompt(id) {
-      if (!confirm('Tem certeza que deseja excluir este marco de rodada?')) return;
-      await fetch('/api/rodadas/excluir', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      loadRodadasList();
-      loadReportData();
+    let currentPurgeRodadaId = null;
+
+    async function openPurgeRodadaModal(id) {
+      currentPurgeRodadaId = id;
+      const modal = document.getElementById('purgeRodadaModal');
+      const body = document.getElementById('purgeRodadaBody');
+      const btnConfirm = document.getElementById('purgeRodadaConfirmBtn');
+      
+      modal.style.display = 'flex';
+      btnConfirm.disabled = true;
+      btnConfirm.style.opacity = '0.5';
+      body.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; padding:15px; text-align:center;">Calculando volumetria da rodada #' + id + '...</div>';
+
+      try {
+        const res = await fetch('/api/rodadas/purge-preview?id=' + encodeURIComponent(id));
+        const data = await res.json();
+        if (!data.ok || !data.preview) {
+          body.innerHTML = '<div style="color:#ef4444; font-size:0.85rem;">Erro ao obter prévia: ' + (data.error || 'Rodada inválida') + '</div>';
+          return;
+        }
+
+        const p = data.preview;
+        if (p.ativo) {
+          body.innerHTML = '<div style="background:rgba(239, 68, 68, 0.15); border:1px solid #ef4444; border-radius:8px; padding:14px; color:#fca5a5; font-size:0.85rem;">' +
+                           '⚠️ <strong>Esta é a Rodada Ativa.</strong><br>O sistema de integridade do TSE proíbe o expurgo da rodada atualmente em monitoramento contínuo.</div>';
+          return;
+        }
+
+        const dInicio = new Date(p.inicio_unix);
+        const dtInicioStr = dInicio.toLocaleDateString('pt-BR') + ' ' + dInicio.toLocaleTimeString('pt-BR');
+        const dtFimStr = p.fim_unix ? (new Date(p.fim_unix).toLocaleDateString('pt-BR') + ' ' + new Date(p.fim_unix).toLocaleTimeString('pt-BR')) : 'Até o presente momento';
+
+        body.innerHTML = 
+          '<div style="font-size:0.85rem; color:#f8fafc; margin-bottom:14px; line-height:1.45;">' +
+            'Você está prestes a realizar o <strong>Expurgo Físico Definitivo (Purge)</strong> da rodada:<br>' +
+            '<div style="margin-top:6px; font-weight:700; color:#38bdf8; font-size:0.95rem;">#' + p.id + ' ' + p.nome + '</div>' +
+            '<div style="font-size:0.75rem; color:#94a3b8;">Período: ' + dtInicioStr + ' ➔ ' + dtFimStr + '</div>' +
+          '</div>' +
+          '<div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:0.82rem;">' +
+            '<div style="font-weight:700; color:#ef4444; margin-bottom:8px; display:flex; align-items:center; gap:6px;">' +
+              '<span>🗑️ Volumetria a ser destruída e expurgada:</span>' +
+            '</div>' +
+            '<ul style="margin:0; padding-left:18px; color:#cbd5e1; line-height:1.6;">' +
+              '<li><strong>' + p.leituras.toLocaleString('pt-BR') + '</strong> registros na tabela <code>leituras</code></li>' +
+              '<li><strong>' + p.regressoes.toLocaleString('pt-BR') + '</strong> registros na tabela <code>regressoes</code></li>' +
+              '<li><strong>' + p.arquivosEvidencia.toLocaleString('pt-BR') + '</strong> arquivos físicos brutos em <code>evidencias_raw/</code> (' + p.tamanhoEvidenciasMB + ' MB)</li>' +
+              '<li>Marco zero e metadados da rodada na tabela <code>rodadas</code></li>' +
+            '</ul>' +
+          '</div>' +
+          '<div style="background:rgba(245, 158, 11, 0.12); border:1px solid rgba(245, 158, 11, 0.35); border-radius:8px; padding:10px 12px; font-size:0.78rem; color:#fde68a; line-height:1.4;">' +
+            '⚡ <strong>Recuperação Imediata de Disco:</strong> O SQLite executará automaticamente o comando <code>VACUUM</code> após a limpeza, devolvendo o espaço físico livre do arquivo <code>tdtot_auditoria.db</code> (' + p.dbSizeMB + ' MB) para o sistema operacional.' +
+          '</div>';
+
+        btnConfirm.disabled = false;
+        btnConfirm.style.opacity = '1';
+      } catch (err) {
+        body.innerHTML = '<div style="color:#ef4444; font-size:0.85rem;">Erro de conexão ao calcular prévia: ' + err.message + '</div>';
+      }
+    }
+
+    function closePurgeRodadaModal() {
+      document.getElementById('purgeRodadaModal').style.display = 'none';
+      currentPurgeRodadaId = null;
+    }
+
+    async function executePurgeRodada() {
+      if (!currentPurgeRodadaId) return;
+      const btnConfirm = document.getElementById('purgeRodadaConfirmBtn');
+      const body = document.getElementById('purgeRodadaBody');
+      
+      btnConfirm.disabled = true;
+      btnConfirm.style.opacity = '0.5';
+      btnConfirm.innerText = 'Expurgando dados & Executando VACUUM...';
+
+      try {
+        const res = await fetch('/api/rodadas/purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: currentPurgeRodadaId })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closePurgeRodadaModal();
+          alert('Expurgo concluído com sucesso!\n\n' +
+                '• Leituras excluídas: ' + (data.leiturasExcluidas || 0).toLocaleString('pt-BR') + '\n' +
+                '• Regressões excluídas: ' + (data.regressoesExcluidas || 0).toLocaleString('pt-BR') + '\n' +
+                '• Arquivos removidos: ' + (data.arquivosRemovidos || 0).toLocaleString('pt-BR') + '\n' +
+                '• Tamanho do banco SQLite: ' + data.dbSizeBeforeMB + ' MB ➔ ' + data.dbSizeAfterMB + ' MB');
+          loadRodadasList();
+          loadReportData();
+        } else {
+          alert('Falha ao expurgar rodada: ' + (data.error || 'Erro desconhecido'));
+          btnConfirm.disabled = false;
+          btnConfirm.style.opacity = '1';
+          btnConfirm.innerText = '🗑️ Confirmar Expurgo Físico';
+        }
+      } catch (err) {
+        alert('Erro ao requisitar expurgo: ' + err.message);
+        btnConfirm.disabled = false;
+        btnConfirm.style.opacity = '1';
+        btnConfirm.innerText = '🗑️ Confirmar Expurgo Físico';
+      }
     }
   </script>
 
@@ -3922,6 +4150,27 @@ function generateHtmlReport(embeddedData = null) {
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
         <button onclick="closeEditRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
         <button onclick="submitEditRodadaModal()" class="btn" style="background:#0284c7; padding:8px 18px; font-weight:700;">💾 Salvar Alterações</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMAÇÃO DE EXPURGO FÍSICO (PURGE COM VACUUM) -->
+  <div id="purgeRodadaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10001; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div style="background:#1e293b; border:1px solid #ef4444; border-radius:14px; width:92%; max-width:540px; padding:24px; box-shadow:0 25px 50px -12px rgba(239,68,68,0.3); color:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid rgba(239,68,68,0.3); padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px; color:#ef4444;">
+          🚨 Expurgo Físico de Rodada (Purge)
+        </h3>
+        <button onclick="closePurgeRodadaModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <div id="purgeRodadaBody" style="min-height:140px;">
+        <!-- Preenchido dinamicamente via /api/rodadas/purge-preview -->
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; border-top:1px solid #334155; padding-top:14px;">
+        <button onclick="closePurgeRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
+        <button id="purgeRodadaConfirmBtn" onclick="executePurgeRodada()" class="btn" style="background:#ef4444; padding:8px 18px; font-weight:700;">🗑️ Confirmar Expurgo Físico</button>
       </div>
     </div>
   </div>
@@ -5126,7 +5375,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <!-- LINHA 1: Título, Status, Eleições, Servidores e Botões de Exportação à Direita -->
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;">
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.0.1</span></h1>
+        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.1.0</span></h1>
         
         <!-- STATUS BADGE (30px) -->
         <span id="statusBadge" class="status-badge status-ok" onclick="openRegressoesModal()" title="Clique para abrir a auditoria forense detalhada de todas as regressões detectadas" style="height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -6850,8 +7099,14 @@ function setElText(id, val) {
         btnDel.className = 'btn-copy';
         btnDel.style.color = '#ef4444';
         btnDel.innerText = '🗑️';
-        btnDel.title = 'Excluir marco desta rodada';
-        btnDel.onclick = () => deleteRodadaPrompt(r.id);
+        btnDel.title = isActive ? 'A rodada ativa não pode ser expurgada' : 'Expurgo Forense: excluir rodada, leituras, regressões e evidências';
+        if (isActive) {
+          btnDel.style.opacity = '0.35';
+          btnDel.style.cursor = 'not-allowed';
+          btnDel.onclick = () => alert('A rodada atualmente ativa não pode ser expurgada.');
+        } else {
+          btnDel.onclick = () => openPurgeRodadaModal(r.id);
+        }
         actions.appendChild(btnDel);
 
         item.appendChild(actions);
@@ -6979,15 +7234,108 @@ function setElText(id, val) {
       }
     }
 
-    async function deleteRodadaPrompt(id) {
-      if (!confirm('Tem certeza que deseja excluir este marco de rodada?')) return;
-      await fetch('/api/rodadas/excluir', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      loadRodadasList();
-      loadData();
+    let currentPurgeRodadaId = null;
+
+    async function openPurgeRodadaModal(id) {
+      currentPurgeRodadaId = id;
+      const modal = document.getElementById('purgeRodadaModal');
+      const body = document.getElementById('purgeRodadaBody');
+      const btnConfirm = document.getElementById('purgeRodadaConfirmBtn');
+      
+      modal.style.display = 'flex';
+      btnConfirm.disabled = true;
+      btnConfirm.style.opacity = '0.5';
+      body.innerHTML = '<div style="color:#94a3b8; font-size:0.85rem; padding:15px; text-align:center;">Calculando volumetria da rodada #' + id + '...</div>';
+
+      try {
+        const res = await fetch('/api/rodadas/purge-preview?id=' + encodeURIComponent(id));
+        const data = await res.json();
+        if (!data.ok || !data.preview) {
+          body.innerHTML = '<div style="color:#ef4444; font-size:0.85rem;">Erro ao obter prévia: ' + (data.error || 'Rodada inválida') + '</div>';
+          return;
+        }
+
+        const p = data.preview;
+        if (p.ativo) {
+          body.innerHTML = '<div style="background:rgba(239, 68, 68, 0.15); border:1px solid #ef4444; border-radius:8px; padding:14px; color:#fca5a5; font-size:0.85rem;">' +
+                           '⚠️ <strong>Esta é a Rodada Ativa.</strong><br>O sistema de integridade do TSE proíbe o expurgo da rodada atualmente em monitoramento contínuo.</div>';
+          return;
+        }
+
+        const dInicio = new Date(p.inicio_unix);
+        const dtInicioStr = dInicio.toLocaleDateString('pt-BR') + ' ' + dInicio.toLocaleTimeString('pt-BR');
+        const dtFimStr = p.fim_unix ? (new Date(p.fim_unix).toLocaleDateString('pt-BR') + ' ' + new Date(p.fim_unix).toLocaleTimeString('pt-BR')) : 'Até o presente momento';
+
+        body.innerHTML = 
+          '<div style="font-size:0.85rem; color:#f8fafc; margin-bottom:14px; line-height:1.45;">' +
+            'Você está prestes a realizar o <strong>Expurgo Físico Definitivo (Purge)</strong> da rodada:<br>' +
+            '<div style="margin-top:6px; font-weight:700; color:#38bdf8; font-size:0.95rem;">#' + p.id + ' ' + p.nome + '</div>' +
+            '<div style="font-size:0.75rem; color:#94a3b8;">Período: ' + dtInicioStr + ' ➔ ' + dtFimStr + '</div>' +
+          '</div>' +
+          '<div style="background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px 14px; margin-bottom:14px; font-size:0.82rem;">' +
+            '<div style="font-weight:700; color:#ef4444; margin-bottom:8px; display:flex; align-items:center; gap:6px;">' +
+              '<span>🗑️ Volumetria a ser destruída e expurgada:</span>' +
+            '</div>' +
+            '<ul style="margin:0; padding-left:18px; color:#cbd5e1; line-height:1.6;">' +
+              '<li><strong>' + p.leituras.toLocaleString('pt-BR') + '</strong> registros na tabela <code>leituras</code></li>' +
+              '<li><strong>' + p.regressoes.toLocaleString('pt-BR') + '</strong> registros na tabela <code>regressoes</code></li>' +
+              '<li><strong>' + p.arquivosEvidencia.toLocaleString('pt-BR') + '</strong> arquivos físicos brutos em <code>evidencias_raw/</code> (' + p.tamanhoEvidenciasMB + ' MB)</li>' +
+              '<li>Marco zero e metadados da rodada na tabela <code>rodadas</code></li>' +
+            '</ul>' +
+          '</div>' +
+          '<div style="background:rgba(245, 158, 11, 0.12); border:1px solid rgba(245, 158, 11, 0.35); border-radius:8px; padding:10px 12px; font-size:0.78rem; color:#fde68a; line-height:1.4;">' +
+            '⚡ <strong>Recuperação Imediata de Disco:</strong> O SQLite executará automaticamente o comando <code>VACUUM</code> após a limpeza, devolvendo o espaço físico livre do arquivo <code>tdtot_auditoria.db</code> (' + p.dbSizeMB + ' MB) para o sistema operacional.' +
+          '</div>';
+
+        btnConfirm.disabled = false;
+        btnConfirm.style.opacity = '1';
+      } catch (err) {
+        body.innerHTML = '<div style="color:#ef4444; font-size:0.85rem;">Erro de conexão ao calcular prévia: ' + err.message + '</div>';
+      }
+    }
+
+    function closePurgeRodadaModal() {
+      document.getElementById('purgeRodadaModal').style.display = 'none';
+      currentPurgeRodadaId = null;
+    }
+
+    async function executePurgeRodada() {
+      if (!currentPurgeRodadaId) return;
+      const btnConfirm = document.getElementById('purgeRodadaConfirmBtn');
+      const body = document.getElementById('purgeRodadaBody');
+      
+      btnConfirm.disabled = true;
+      btnConfirm.style.opacity = '0.5';
+      btnConfirm.innerText = 'Expurgando dados & Executando VACUUM...';
+
+      try {
+        const res = await fetch('/api/rodadas/purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: currentPurgeRodadaId })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closePurgeRodadaModal();
+          alert('Expurgo concluído com sucesso!\n\n' +
+                '• Leituras excluídas: ' + (data.leiturasExcluidas || 0).toLocaleString('pt-BR') + '\n' +
+                '• Regressões excluídas: ' + (data.regressoesExcluidas || 0).toLocaleString('pt-BR') + '\n' +
+                '• Arquivos removidos: ' + (data.arquivosRemovidos || 0).toLocaleString('pt-BR') + '\n' +
+                '• Tamanho do banco SQLite: ' + data.dbSizeBeforeMB + ' MB ➔ ' + data.dbSizeAfterMB + ' MB');
+          loadRodadasList();
+          loadData();
+        } else {
+          alert('Falha ao expurgar rodada: ' + (data.error || 'Erro desconhecido'));
+          btnConfirm.disabled = false;
+          btnConfirm.style.opacity = '1';
+          btnConfirm.innerText = '🗑️ Confirmar Expurgo Físico';
+        }
+      } catch (err) {
+        alert('Erro ao requisitar expurgo: ' + err.message);
+        btnConfirm.disabled = false;
+        btnConfirm.style.opacity = '1';
+        btnConfirm.innerText = '🗑️ Confirmar Expurgo Físico';
+      }
     }
 
     let zipOptionsData = null;
@@ -8464,6 +8812,27 @@ function setElText(id, val) {
     </div>
   </div>
 
+  <!-- MODAL DE CONFIRMAÇÃO DE EXPURGO FÍSICO (PURGE COM VACUUM) -->
+  <div id="purgeRodadaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10001; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div style="background:#1e293b; border:1px solid #ef4444; border-radius:14px; width:92%; max-width:540px; padding:24px; box-shadow:0 25px 50px -12px rgba(239,68,68,0.3); color:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid rgba(239,68,68,0.3); padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px; color:#ef4444;">
+          🚨 Expurgo Físico de Rodada (Purge)
+        </h3>
+        <button onclick="closePurgeRodadaModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <div id="purgeRodadaBody" style="min-height:140px;">
+        <!-- Preenchido dinamicamente via /api/rodadas/purge-preview -->
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; border-top:1px solid #334155; padding-top:14px;">
+        <button onclick="closePurgeRodadaModal()" class="btn btn-outline" style="padding:8px 16px;">Cancelar</button>
+        <button id="purgeRodadaConfirmBtn" onclick="executePurgeRodada()" class="btn" style="background:#ef4444; padding:8px 18px; font-weight:700;">🗑️ Confirmar Expurgo Físico</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL DE EXPORTAÇÃO ZIP DE VERSÕES -->
   <div id="zipModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
     <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:90%; max-width:540px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); color:#f8fafc;">
@@ -9786,6 +10155,37 @@ function startDashboardServer() {
         deleteRodada(Number(params.id));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
+      });
+      return;
+    }
+
+    if (url.pathname === '/api/rodadas/purge-preview' && req.method === 'GET') {
+      const id = url.searchParams.get('id');
+      const preview = getPurgeRodadaPreview(id);
+      if (!preview) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Rodada não encontrada.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true, preview }));
+      return;
+    }
+
+    if (url.pathname === '/api/rodadas/purge' && req.method === 'POST') {
+      let bodyStr = '';
+      req.on('data', chunk => bodyStr += chunk);
+      req.on('end', () => {
+        let params = {};
+        try { params = JSON.parse(bodyStr); } catch {}
+        try {
+          const result = purgeRodada(Number(params.id));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        }
       });
       return;
     }

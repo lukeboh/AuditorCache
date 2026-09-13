@@ -7,6 +7,16 @@ e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/p
 
 ---
 
+## [1.1.0] - 2026-09-12
+
+### Adicionado
+- **Expurgo Físico Definitivo de Rodadas (Purge & Disk Reclamation):**
+  - Implementação de modal interativo de confirmação com visualização de volumetria prévia (`/api/rodadas/purge-preview`).
+  - Remoção em cascata transacional de registros das tabelas `leituras`, `regressoes` e `rodadas` (`/api/rodadas/purge`).
+  - Limpeza física e cirúrgica de arquivos de evidência forense em disco (`evidencias_raw/`) pertencentes à rodada, sem comandos de shell ou wildcards.
+  - Execução imediata de `VACUUM` no SQLite para deflacionar e recuperar o espaço em disco do arquivo `tdtot_auditoria.db`.
+  - Salvaguarda rígida impedindo a exclusão ou expurgo da rodada atualmente ativa.
+
 ## [1.0.1] - 2026-09-12
 
 ### Modificado
