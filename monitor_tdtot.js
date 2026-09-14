@@ -2859,7 +2859,7 @@ function generateHtmlReport(embeddedData = null) {
         let orderStatus = '<span class="badge badge-sync">OK</span>';
         const hasReg = (row.hmg?.status === 'REGRESSAO_DETECTADA' || row.sim?.status === 'REGRESSAO_DETECTADA');
         if (hasReg) {
-          const regSrv = row.hmg?.status === 'REGRESSAO_DETECTADA' ? 'HMG' : 'SIM';
+          const regSrv = row.hmg?.status === 'REGRESSAO_DETECTADA' ? (row.originKey || 'HMG-INTERESSADOS') : (row.comparison?.primaryReplicaKey || 'SIM-INTERESSADOS');
           const regCrit = (row.hmg?.status === 'REGRESSAO_DETECTADA' ? row.hmg?.criterion : row.sim?.criterion) || 'REGRESSÃO';
           orderStatus = '<span class="badge badge-danger">REGRESSÃO (' + regSrv + '): ' + regCrit + '</span>';
         }
@@ -3057,8 +3057,13 @@ function generateHtmlReport(embeddedData = null) {
         const timeStr = r.timestamp_iso ? new Date(r.timestamp_iso).toLocaleTimeString('pt-BR') : '-';
         const elapsedText = r.timestamp_iso ? formatMinSec(Math.round((Date.now() - new Date(r.timestamp_iso).getTime()) / 1000)) + ' atrás' : '-';
 
-        const serverRoleDesc = r.papel_servidor || (r.servidor === 'HMG' ? 'Origem / Primário' : 'Cache / Réplica');
-        const serverBadgeClass = r.servidor === 'HMG' ? 'badge-purple' : 'badge-yellow';
+        const isOriginServer = Boolean(
+          (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
+          (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
+          (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
+        );
+        const serverRoleDesc = r.papel_servidor || (isOriginServer ? 'Origem / Primário' : 'Cache / Réplica');
+        const serverBadgeClass = isOriginServer ? 'badge-purple' : 'badge-yellow';
 
         const critBadges = [];
         if (r.criterio) {
@@ -3189,7 +3194,11 @@ function generateHtmlReport(embeddedData = null) {
               ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
               : '';
             const isReg = step.isRegressionPoint;
-            const isOrigin = step.servidor === 'HMG';
+            const isOrigin = Boolean(
+              (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
+              (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
+              (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === step.servidor)
+            );
             
             const itemClass = isReg ? 'timeline-step-reg' : (isOrigin ? 'timeline-step-origin' : 'timeline-step-normal');
             const itemBg = isReg 
@@ -3434,7 +3443,12 @@ function generateHtmlReport(embeddedData = null) {
       const etag = rawHeaders['etag'] || '-';
       const lastModified = rawHeaders['last-modified'] || '-';
       const dateHttp = rawHeaders['date'] || '-';
-      const webServer = rawHeaders['server'] || (r.servidor === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
+      const isOriginReg = Boolean(
+        (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
+        (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
+        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
+      );
+      const webServer = rawHeaders['server'] || (isOriginReg ? 'Apache Origin' : 'Akamai CDN');
       const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
       const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
       const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
@@ -3509,7 +3523,7 @@ function generateHtmlReport(embeddedData = null) {
         '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
           '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
             '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
-            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (r.servidor === 'HMG' ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (isOriginReg ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
           '</div>' +
           '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
         '</div>' +
@@ -5823,8 +5837,12 @@ function setElText(id, val) {
       feed.innerHTML = '';
       for (const log of data.recentLogs) {
         const item = document.createElement('div');
-        item.className = 'log-item';
-        const srcColor = log.serverKey === 'HMG' ? 'tag-hmg-title' : 'tag-sim-title';
+        const isOriginLog = Boolean(
+          (log.role && (log.role.includes('ORIGEM') || log.role.includes('FONTE'))) ||
+          (log.serverKey && (log.serverKey.includes('HMG') || log.serverKey === 'HMG')) ||
+          (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === log.serverKey)
+        );
+        const srcColor = isOriginLog ? 'tag-hmg-title' : 'tag-sim-title';
         const alertStyle = log.isRegression ? 'color: var(--accent-red); font-weight: bold;' : '';
         const critBadge = log.criterion && log.criterion !== 'NORMAL' && log.criterion !== 'OK' && log.criterion !== 'INICIAL' 
           ? \`<span style="background:#dc2626; color:#fff; padding:1px 5px; border-radius:3px; font-size:0.7rem; margin-right:4px;">\${log.criterion}</span>\`
@@ -7481,8 +7499,13 @@ function setElText(id, val) {
           critBadgesHtml += '<span style="background:rgba(168,85,247,0.25); color:#c084fc; border:1px solid #c084fc; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:600;">⚠️ IDG</span> ';
         }
 
-        const serverBadgeClass = r.servidor === 'HMG' ? 'tag-hmg-title' : 'tag-sim-title';
-        const serverRoleDesc = r.papel_servidor || (r.servidor === 'HMG' ? 'Fonte Oficial' : 'Cache Akamai');
+        const isOriginServer = Boolean(
+          (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
+          (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
+          (typeof data !== 'undefined' && data && data.originKey === r.servidor)
+        );
+        const serverBadgeClass = isOriginServer ? 'tag-hmg-title' : 'tag-sim-title';
+        const serverRoleDesc = r.papel_servidor || (isOriginServer ? 'Fonte Oficial' : 'Cache Akamai');
 
         const prevTotStr = (r.dt_anterior ? r.dt_anterior + ' ' + (r.ht_anterior || '') : '-');
         const currTotStr = (r.dt_recebido ? r.dt_recebido + ' ' + (r.ht_recebido || '') : '-');
@@ -7605,7 +7628,11 @@ function setElText(id, val) {
               ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
               : '';
             const isReg = step.isRegressionPoint;
-            const isOrigin = step.servidor === 'HMG';
+            const isOrigin = Boolean(
+              (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
+              (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
+              (typeof data !== 'undefined' && data && data.originKey === step.servidor)
+            );
             
             const itemBg = isReg 
               ? 'background:rgba(239,68,68,0.14); border:1px solid #ef4444;' 
@@ -7867,8 +7894,12 @@ function setElText(id, val) {
       const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
       const etag = rawHeaders['etag'] || '-';
       const lastModified = rawHeaders['last-modified'] || '-';
-      const dateHttp = rawHeaders['date'] || '-';
-      const webServer = rawHeaders['server'] || (r.servidor === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
+      const isOriginReg = Boolean(
+        (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
+        (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
+        (typeof data !== 'undefined' && data && data.originKey === r.servidor)
+      );
+      const webServer = rawHeaders['server'] || (isOriginReg ? 'Apache Origin' : 'Akamai CDN');
       const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
       const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
       const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
@@ -7944,7 +7975,7 @@ function setElText(id, val) {
         '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
           '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
             '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
-            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (r.servidor === 'HMG' ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (isOriginReg ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
           '</div>' +
           '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
         '</div>' +
