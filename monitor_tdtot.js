@@ -286,6 +286,7 @@ db.exec(`
 `);
 
 try { db.exec('ALTER TABLE regressoes ADD COLUMN criterio TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE eleicoes_monitoradas ADD COLUMN ciclo TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE comparativos ADD COLUMN defasagem_idg INTEGER;'); } catch (e) {}
 try { db.exec('ALTER TABLE comparativos ADD COLUMN tempo_sync_segundos REAL;'); } catch (e) {}
 try { db.exec('ALTER TABLE leituras ADD COLUMN dt TEXT;'); } catch (e) {}
@@ -417,6 +418,18 @@ function getReplicaServers() {
 const SERVERS = new Proxy({}, {
   get(target, prop) {
     if (typeof prop !== 'string') return undefined;
+    const origin = getOriginServer();
+    const replica = getReplicaServers()[0];
+    if (prop === 'HMG') {
+      const s = (origin && origin.ativo) ? origin : knownServers.get('HMG');
+      if (s) return { key: s.chave, role: s.papel === 'ORIGEM' ? 'FONTE / ORIGEM' : (s.nome || 'FONTE / ORIGEM'), baseUrl: s.baseUrl };
+      return { key: 'HMG', role: 'FONTE / ORIGEM', baseUrl: 'https://resultados-hmg.tse.jus.br/simulado/' };
+    }
+    if (prop === 'SIM') {
+      const s = (replica && replica.ativo) ? replica : knownServers.get('SIM');
+      if (s) return { key: s.chave, role: s.papel === 'ORIGEM' ? 'FONTE / ORIGEM' : (s.nome || 'CACHE / DISTRIBUIÇÃO'), baseUrl: s.baseUrl };
+      return { key: 'SIM', role: 'CACHE / DISTRIBUIÇÃO', baseUrl: 'https://resultados-sim.tse.jus.br/simulado/simulado/' };
+    }
     const s = knownServers.get(prop);
     if (s) {
       return {
@@ -425,8 +438,6 @@ const SERVERS = new Proxy({}, {
         baseUrl: s.baseUrl
       };
     }
-    if (prop === 'HMG') return { key: 'HMG', role: 'FONTE / ORIGEM', baseUrl: 'https://resultados-hmg.tse.jus.br/teste/' };
-    if (prop === 'SIM') return { key: 'SIM', role: 'CACHE / DISTRIBUIÇÃO', baseUrl: 'https://resultados-sim.tse.jus.br/simulado/teste/' };
     return undefined;
   }
 });
@@ -504,7 +515,7 @@ function hydrateStateFromDb() {
           ROUND((s.timestamp_unix - h.timestamp_unix) / 1000.0) as sync_delay_sec
         FROM leituras h
         JOIN leituras s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
-        WHERE h.servidor = 'HMG' AND s.servidor = 'SIM' AND s.timestamp_unix >= h.timestamp_unix AND h.timestamp_unix >= ?
+        WHERE (h.papel_servidor = 'ORIGEM' OR h.servidor = 'HMG') AND (s.papel_servidor = 'REPLICA' OR s.servidor = 'SIM') AND s.timestamp_unix >= h.timestamp_unix AND h.timestamp_unix >= ?
         GROUP BY h.arquivo
         ORDER BY h.id DESC
       `).all(rodadaInicio);
@@ -542,30 +553,33 @@ const CARGOS_ESTADUAL = [
 ];
 
 function buildCatalog() {
+  if (knownElections && knownElections.size > 0) {
+    return buildCatalogFromElections();
+  }
   const list = [];
   list.push('comum/config/ele-c.json');
-  list.push('tdtot2026/21270/config/mun-e021270-cm.json');
-  list.push('tdtot2026/21272/config/mun-e021272-cm.json');
+  list.push('ele2026/21270/config/mun-e021270-cm.json');
+  list.push('ele2026/21272/config/mun-e021272-cm.json');
 
   // Configuração de Seções (-cs.json) do Pleito 17801
   for (const uf of UFS) {
-    list.push(`tdtot2026/arquivo-urna/17801/config/${uf}/${uf}-p017801-cs.json`);
+    list.push(`ele2026/arquivo-urna/17801/config/${uf}/${uf}-p017801-cs.json`);
   }
 
-  list.push('tdtot2026/21270/dados/br/br-c0001-e021270-u.json');
-  list.push('tdtot2026/21270/dados/br/br-e021270-ab.json');
+  list.push('ele2026/21270/dados/br/br-c0001-e021270-u.json');
+  list.push('ele2026/21270/dados/br/br-e021270-ab.json');
   for (const uf of UFS) {
-    list.push(`tdtot2026/21270/dados/${uf}/${uf}-c0001-e021270-u.json`);
-    list.push(`tdtot2026/21270/dados/${uf}/${uf}-e021270-ab.json`);
+    list.push(`ele2026/21270/dados/${uf}/${uf}-c0001-e021270-u.json`);
+    list.push(`ele2026/21270/dados/${uf}/${uf}-e021270-ab.json`);
   }
   for (const uf of UFS) {
     if (uf === 'zz') continue;
-    list.push(`tdtot2026/21272/dados/${uf}/${uf}-e021272-ab.json`);
+    list.push(`ele2026/21272/dados/${uf}/${uf}-e021272-ab.json`);
     for (const c of CARGOS_ESTADUAL) {
       if (uf === 'df' && c.cod === '0007') {
-        list.push(`tdtot2026/21272/dados/df/df-c0008-e021272-u.json`);
+        list.push(`ele2026/21272/dados/df/df-c0008-e021272-u.json`);
       } else {
-        list.push(`tdtot2026/21272/dados/${uf}/${uf}-c${c.cod}-e021272-u.json`);
+        list.push(`ele2026/21272/dados/${uf}/${uf}-c${c.cod}-e021272-u.json`);
       }
     }
   }
@@ -603,24 +617,37 @@ async function discoverAvailableElections() {
     const saved = db.prepare('SELECT cd, ativo FROM eleicoes_monitoradas').all();
     const savedMap = new Map(saved.map(s => [s.cd, s.ativo === 1]));
 
-    const discoveryUrl = (knownServers.get('SIM')?.baseUrl || getOriginServer()?.baseUrl || 'https://resultados-sim.tse.jus.br/simulado/teste/');
+    const origin = getOriginServer();
+    const replica = getReplicaServers()[0];
+    const discoveryUrl = (origin && origin.ativo ? origin.baseUrl : (replica && replica.ativo ? replica.baseUrl : 'https://resultados-hmg.tse.jus.br/simulado/'));
     const eleRes = await fetchJsonHttps(discoveryUrl + 'comum/config/ele-c.json');
     if (eleRes.status !== 200 || !eleRes.json || !eleRes.json.pl) return;
 
     for (const pl of eleRes.json.pl) {
+      const ciclo = pl.c || 'ele2026';
       for (const el of (pl.e || [])) {
         const cd = String(el.cd);
         const padded = cd.padStart(6, '0');
-        const cmRes = await fetchJsonHttps(discoveryUrl + 'tdtot2026/' + cd + '/config/mun-e' + padded + '-cm.json');
+        const cmRes = await fetchJsonHttps(discoveryUrl + ciclo + '/' + cd + '/config/mun-e' + padded + '-cm.json');
         if (cmRes.status === 200 && cmRes.json && cmRes.json.abr) {
           const ufs = cmRes.json.abr.map(a => a.cd);
           const nm = el.nm.replace(/&#186;/g, 'º');
-          let ativo = savedMap.has(cd) ? savedMap.get(cd) : (cd === '21270' || cd === '21272');
-          
-          if (!savedMap.has(cd)) {
-            db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo) VALUES (?, ?, ?, ?, ?)')
-              .run(cd, nm, String(el.tp), String(pl.cd), ativo ? 1 : 0);
+
+          let ativo;
+          if (savedMap.has(cd)) {
+            ativo = savedMap.get(cd);
+          } else {
+            ativo = (cd === '21270' || cd === '21272');
           }
+
+          // Se todas as eleições salvas estiverem inativas no banco, ativa as principais (21270 e 21272)
+          const anySavedActive = Array.from(savedMap.values()).some(v => v === true);
+          if (!anySavedActive && (cd === '21270' || cd === '21272')) {
+            ativo = true;
+          }
+
+          db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo, ciclo) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(cd, nm, String(el.tp), String(pl.cd), ativo ? 1 : 0, ciclo);
 
           knownElections.set(cd, {
             cd,
@@ -628,6 +655,7 @@ async function discoverAvailableElections() {
             nm,
             tp: String(el.tp),
             pleito: String(pl.cd),
+            ciclo,
             ufs,
             abr: cmRes.json.abr,
             ativo
@@ -635,7 +663,7 @@ async function discoverAvailableElections() {
         }
       }
     }
-    console.log(`🎯 [DESCOBERTA DE ELEIÇÕES] ${knownElections.size} eleições ativas catalogadas do sistema TSE.`);
+    console.log(`🎯 [DESCOBERTA DE ELEIÇÕES] ${knownElections.size} eleições catalogadas do sistema TSE.`);
   } catch (err) {
     console.error('Erro na descoberta de eleições:', err.message);
   }
@@ -647,42 +675,43 @@ function buildCatalogFromElections() {
 
   for (const [cd, el] of knownElections.entries()) {
     if (!el.ativo) continue;
+    const ciclo = el.ciclo || 'ele2026';
     const padded = el.padded;
-    list.push(`tdtot2026/${cd}/config/mun-e${padded}-cm.json`);
+    list.push(`${ciclo}/${cd}/config/mun-e${padded}-cm.json`);
 
     if (el.tp === '8') {
-      list.push(`tdtot2026/${cd}/dados/br/br-e${padded}-ab.json`);
-      list.push(`tdtot2026/${cd}/dados/br/br-c0001-e${padded}-u.json`);
+      list.push(`${ciclo}/${cd}/dados/br/br-e${padded}-ab.json`);
+      list.push(`${ciclo}/${cd}/dados/br/br-c0001-e${padded}-u.json`);
       for (const uf of el.ufs) {
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-c0001-e${padded}-u.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-c0001-e${padded}-u.json`);
       }
     } else if (el.tp === '1') {
       for (const uf of el.ufs) {
         if (uf === 'zz') continue;
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-c0003-e${padded}-u.json`);
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-c0005-e${padded}-u.json`);
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-c0006-e${padded}-u.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-c0003-e${padded}-u.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-c0005-e${padded}-u.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-c0006-e${padded}-u.json`);
         if (uf === 'df') {
-          list.push(`tdtot2026/${cd}/dados/df/df-c0008-e${padded}-u.json`);
+          list.push(`${ciclo}/${cd}/dados/df/df-c0008-e${padded}-u.json`);
         } else {
-          list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-c0007-e${padded}-u.json`);
+          list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-c0007-e${padded}-u.json`);
         }
       }
     } else if (el.tp === '3') {
       for (const uf of el.ufs) {
-        list.push(`tdtot2026/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
+        list.push(`${ciclo}/${cd}/dados/${uf}/${uf}-e${padded}-ab.json`);
       }
       if (el.abr) {
         for (const abr of el.abr) {
           const uf = abr.cd;
           for (const mu of (abr.mu || []).slice(0, 5)) {
             if (cd === '21274' && mu.cd === '30015') {
-              list.push(`tdtot2026/${cd}/dados/${uf}/${uf}${mu.cd}-c0025-e${padded}-u.json`);
+              list.push(`${ciclo}/${cd}/dados/${uf}/${uf}${mu.cd}-c0025-e${padded}-u.json`);
             } else {
-              list.push(`tdtot2026/${cd}/dados/${uf}/${uf}${mu.cd}-c0011-e${padded}-u.json`);
-              list.push(`tdtot2026/${cd}/dados/${uf}/${uf}${mu.cd}-c0013-e${padded}-u.json`);
+              list.push(`${ciclo}/${cd}/dados/${uf}/${uf}${mu.cd}-c0011-e${padded}-u.json`);
+              list.push(`${ciclo}/${cd}/dados/${uf}/${uf}${mu.cd}-c0013-e${padded}-u.json`);
             }
           }
         }
@@ -691,26 +720,28 @@ function buildCatalogFromElections() {
   }
 
   // Adiciona arquivos de configuração de seção (-cs.json) para os pleitos ativos
-  const activePleitos = new Set();
+  const activePleitos = new Map();
   for (const [cd, el] of knownElections.entries()) {
-    if (el.ativo && el.pleito) activePleitos.add(el.pleito);
+    if (el.ativo && el.pleito) activePleitos.set(el.pleito, el.ciclo || 'ele2026');
   }
-  if (activePleitos.size === 0) activePleitos.add('17801');
-  for (const pl of activePleitos) {
+  if (activePleitos.size === 0) activePleitos.set('17801', 'ele2026');
+  for (const [pl, ciclo] of activePleitos.entries()) {
     const paddedPl = String(pl).padStart(6, '0');
     for (const uf of UFS) {
-      list.push(`tdtot2026/arquivo-urna/${pl}/config/${uf}/${uf}-p${paddedPl}-cs.json`);
+      list.push(`${ciclo}/arquivo-urna/${pl}/config/${uf}/${uf}-p${paddedPl}-cs.json`);
     }
   }
 
   if (knownElections.get('21270')?.ativo) {
-    list.push('tdtot2026/21270/dados/sp/sp71072-z0001-c0001-e021270-u.json');
+    const ciclo = knownElections.get('21270')?.ciclo || 'ele2026';
+    list.push(`${ciclo}/21270/dados/sp/sp71072-z0001-c0001-e021270-u.json`);
   }
   if (knownElections.get('21272')?.ativo) {
-    list.push('tdtot2026/21272/dados/sp/sp71072-z0001-c0003-e021272-u.json');
-    list.push('tdtot2026/21272/dados/sp/sp71072-z0001-c0005-e021272-u.json');
-    list.push('tdtot2026/21272/dados/sp/sp71072-z0001-c0006-e021272-u.json');
-    list.push('tdtot2026/21272/dados/sp/sp71072-z0001-c0007-e021272-u.json');
+    const ciclo = knownElections.get('21272')?.ciclo || 'ele2026';
+    list.push(`${ciclo}/21272/dados/sp/sp71072-z0001-c0003-e021272-u.json`);
+    list.push(`${ciclo}/21272/dados/sp/sp71072-z0001-c0005-e021272-u.json`);
+    list.push(`${ciclo}/21272/dados/sp/sp71072-z0001-c0006-e021272-u.json`);
+    list.push(`${ciclo}/21272/dados/sp/sp71072-z0001-c0007-e021272-u.json`);
   }
 
   return list;
@@ -4733,14 +4764,41 @@ async function attachTabObserver(tab) {
           let serverKey = null;
           let relPath = null;
 
-          if (url.includes('resultados-hmg.tse.jus.br')) {
-            serverKey = 'HMG';
-            const m = url.match(/\/teste\/((?:tdtot2026|comum)\/.*?\.(?:json|jws))/);
-            if (m) relPath = m[1].replace(/\.jws$/, '.json');
-          } else if (url.includes('resultados-sim.tse.jus.br')) {
-            serverKey = 'SIM';
-            const m = url.match(/\/simulado\/teste\/((?:tdtot2026|comum)\/.*?\.(?:json|jws))/);
-            if (m) relPath = m[1].replace(/\.jws$/, '.json');
+          const activeServers = getActiveServers();
+          for (const srv of activeServers) {
+            const cleanBase = srv.baseUrl.endsWith('/') ? srv.baseUrl : (srv.baseUrl + '/');
+            if (url.startsWith(cleanBase)) {
+              serverKey = srv.chave;
+              relPath = url.slice(cleanBase.length).split('?')[0].replace(/\.jws$/, '.json');
+              break;
+            }
+          }
+
+          if (!serverKey || !relPath) {
+            for (const srv of activeServers) {
+              try {
+                const uObj = new URL(srv.baseUrl);
+                if (url.includes(uObj.host) && url.includes(uObj.pathname)) {
+                  serverKey = srv.chave;
+                  const idx = url.indexOf(uObj.pathname);
+                  relPath = url.slice(idx + uObj.pathname.length).split('?')[0].replace(/\.jws$/, '.json');
+                  break;
+                }
+              } catch {}
+            }
+          }
+
+          // Fallback retrocompatível para nós legados
+          if (!serverKey || !relPath) {
+            if (url.includes('resultados-hmg.tse.jus.br')) {
+              serverKey = getOriginServer()?.chave || 'HMG';
+              const m = url.match(/\/(?:teste|simulado)\/((?:ele\d{4}|tdtot\d{4}|comum)\/.*?\.(?:json|jws))/);
+              if (m) relPath = m[1].replace(/\.jws$/, '.json');
+            } else if (url.includes('resultados-sim.tse.jus.br')) {
+              serverKey = getReplicaServers()[0]?.chave || 'SIM';
+              const m = url.match(/\/(?:simulado\/teste|simulado\/simulado|simulado)\/((?:ele\d{4}|tdtot\d{4}|comum)\/.*?\.(?:json|jws))/);
+              if (m) relPath = m[1].replace(/\.jws$/, '.json');
+            }
           }
 
           if (serverKey && relPath) {
@@ -8759,7 +8817,7 @@ function scanVersoesFast(baseDir, minMtimeMs = null) {
     for (const ent of entries) {
       if (ent.isDirectory()) {
         let curEl = eleicaoTag;
-        if (!curEl && path.basename(currDir) === 'tdtot2026') {
+        if (!curEl && (path.basename(currDir) === 'tdtot2026' || /^ele\d{4}$/i.test(path.basename(currDir)))) {
           curEl = ent.name;
         }
         walk(path.join(currDir, ent.name), curEl);
@@ -8790,7 +8848,7 @@ function collectFilesForZip(baseDir, eleicaoFilter, minMtimeMs = null) {
       const fullPath = path.join(currDir, ent.name);
       if (ent.isDirectory()) {
         let curEl = eleicaoTag;
-        if (!curEl && path.basename(currDir) === 'tdtot2026') {
+        if (!curEl && (path.basename(currDir) === 'tdtot2026' || /^ele\d{4}$/i.test(path.basename(currDir)))) {
           curEl = ent.name;
         }
         walk(fullPath, curEl);
@@ -8845,13 +8903,13 @@ function getTodaySyncData() {
       WITH hmg_first AS (
         SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
         FROM leituras
-        WHERE servidor = 'HMG' AND timestamp_unix >= ?
+        WHERE (papel_servidor = 'ORIGEM' OR servidor = 'HMG') AND timestamp_unix >= ?
         GROUP BY arquivo, dg, hg
       ),
       sim_first AS (
         SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
         FROM leituras
-        WHERE servidor = 'SIM' AND timestamp_unix >= ?
+        WHERE (papel_servidor = 'REPLICA' OR servidor = 'SIM') AND timestamp_unix >= ?
         GROUP BY arquivo, dg, hg
       )
       SELECT 
@@ -8937,13 +8995,13 @@ function buildHistoricalComparisonPayload(rodadaId) {
     WITH hmg_first AS (
       SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
       FROM leituras
-      WHERE servidor = 'HMG' AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      WHERE (papel_servidor = 'ORIGEM' OR servidor = 'HMG') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
       GROUP BY arquivo, dg, hg
     ),
     sim_first AS (
       SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
       FROM leituras
-      WHERE servidor = 'SIM' AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      WHERE (papel_servidor = 'REPLICA' OR servidor = 'SIM') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
       GROUP BY arquivo, dg, hg
     )
     SELECT 
@@ -8975,9 +9033,14 @@ function buildHistoricalComparisonPayload(rodadaId) {
   // Garante inclusão de todos os arquivos rastreados
   for (const f of Array.from(trackedFiles)) fileSet.add(f);
 
+  const histOrigin = getOriginServer();
+  const histReplica = getReplicaServers()[0];
+  const histOriginKey = histOrigin ? histOrigin.chave : 'HMG';
+  const histReplicaKey = histReplica ? histReplica.chave : 'SIM';
+
   for (const relPath of Array.from(fileSet)) {
-    const hmg = histStates['HMG']?.get(relPath) || null;
-    const sim = histStates['SIM']?.get(relPath) || null;
+    const hmg = (histStates[histOriginKey]?.get(relPath) || histStates['HMG']?.get(relPath)) || null;
+    const sim = (histStates[histReplicaKey]?.get(relPath) || histStates['SIM']?.get(relPath)) || null;
 
     let delaySec = null;
     let statusTime = 'SEM_TIMESTAMP';
@@ -9091,11 +9154,11 @@ function buildHistoricalComparisonPayload(rodadaId) {
       diffSt,
       statusSt,
       textSt,
-      primaryReplicaKey: 'SIM',
-      originKey: 'HMG',
+      primaryReplicaKey: histReplicaKey,
+      originKey: histOriginKey,
       cacheDiff: {
         hmg: {
-          serverKey: 'HMG',
+          serverKey: histOriginKey,
           cacheControl: '(nenhum)',
           maxAge: hmg?.maxAge ?? null,
           cdnStatus: hmg?.cdnCacheStatus || 'ORIGIN',
@@ -9105,7 +9168,7 @@ function buildHistoricalComparisonPayload(rodadaId) {
           lastModified: '-'
         },
         sim: {
-          serverKey: 'SIM',
+          serverKey: histReplicaKey,
           cacheControl: sim?.maxAge ? ('max-age=' + sim.maxAge) : '(nenhum)',
           maxAge: sim?.maxAge ?? null,
           cdnStatus: sim?.cdnCacheStatus || ((sim && sim.maxAge !== null) ? 'Hit (Edge)' : '-'),
@@ -9121,8 +9184,8 @@ function buildHistoricalComparisonPayload(rodadaId) {
       },
       replicas: [
         {
-          chave: 'SIM',
-          nome: 'Simulador Borda (Cache)',
+          chave: histReplicaKey,
+          nome: histReplica ? histReplica.nome : 'Simulador Borda (Cache)',
           hg: sim?.hg || '-',
           dg: sim?.dg || '-',
           idg: sim?.idg || '-',
@@ -9142,14 +9205,14 @@ function buildHistoricalComparisonPayload(rodadaId) {
       ]
     };
 
-    const originUrl = (knownServers.get('HMG')?.baseUrl || '') + relPath;
-    const simUrl = (knownServers.get('SIM')?.baseUrl || '') + relPath;
+    const originUrl = (histOrigin ? histOrigin.baseUrl : (knownServers.get('HMG')?.baseUrl || '')) + relPath;
+    const simUrl = (histReplica ? histReplica.baseUrl : (knownServers.get('SIM')?.baseUrl || '')) + relPath;
 
     comparisonList.push({
       relPath,
       filename: getFilename(relPath),
       meta: parseFileMetadata(relPath),
-      originKey: 'HMG',
+      originKey: histOriginKey,
       originUrl,
       simUrl,
       hmgUrl: originUrl,
@@ -9164,7 +9227,7 @@ function buildHistoricalComparisonPayload(rodadaId) {
     simTtlMin: simTtlMin ?? 0,
     simTtlMax: simTtlMax ?? 60,
     cdnHitRate: cdnTotal > 0 ? Math.round((cdnHits / cdnTotal) * 100) : 100,
-    originKey: 'HMG',
+    originKey: histOriginKey,
     totalAudited: comparisonList.length
   };
 
@@ -9174,7 +9237,7 @@ function buildHistoricalComparisonPayload(rodadaId) {
   return {
     servers: getActiveServers(),
     allServers: Array.from(knownServers.values()),
-    originKey: 'HMG',
+    originKey: histOriginKey,
     isMultiServer: false,
     comparison: comparisonList,
     recentLogs: [],
@@ -9678,6 +9741,7 @@ function startDashboardServer() {
           nome: el.nm,
           tipo: el.tp,
           pleito: el.pleito,
+          ciclo: el.ciclo || 'ele2026',
           ufsCount: el.ufs.length,
           ativo: el.ativo
         });
@@ -9697,8 +9761,8 @@ function startDashboardServer() {
         const el = knownElections.get(cd);
         if (el) {
           el.ativo = params.ativo !== undefined ? Boolean(params.ativo) : !el.ativo;
-          db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo) VALUES (?, ?, ?, ?, ?)')
-            .run(cd, el.nm, el.tp, el.pleito, el.ativo ? 1 : 0);
+          db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo, ciclo) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(cd, el.nm, el.tp, el.pleito, el.ativo ? 1 : 0, el.ciclo || 'ele2026');
           updateTrackedCatalog();
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -9716,8 +9780,8 @@ function startDashboardServer() {
         const ativar = params.ativar !== false;
         for (const [cd, el] of knownElections.entries()) {
           el.ativo = ativar;
-          db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo) VALUES (?, ?, ?, ?, ?)')
-            .run(cd, el.nm, el.tp, el.pleito, el.ativo ? 1 : 0);
+          db.prepare('INSERT OR REPLACE INTO eleicoes_monitoradas (cd, nome, tipo, pleito, ativo, ciclo) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(cd, el.nm, el.tp, el.pleito, el.ativo ? 1 : 0, el.ciclo || 'ele2026');
         }
         updateTrackedCatalog();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -10232,8 +10296,10 @@ async function start() {
   console.log(`${BOLD}${CYAN}======================================================================${RESET}`);
   console.log(`${BOLD}  AUDITOR DUPLO TDTOT TSE - POR DATA/HORA (DG/HG) E POR IDG${RESET}`);
   console.log(`${BOLD}${CYAN}======================================================================${RESET}`);
-  console.log(`FONTE (Origem):       ${SERVERS.HMG.baseUrl}`);
-  console.log(`CACHE (Distrib.):     ${SERVERS.SIM.baseUrl}`);
+  const originSrv = getOriginServer();
+  const replicaSrv = getReplicaServers()[0];
+  console.log(`FONTE (Origem):       ${originSrv ? originSrv.baseUrl + ' (' + originSrv.chave + ')' : SERVERS.HMG.baseUrl}`);
+  console.log(`CACHE (Distrib.):     ${replicaSrv ? replicaSrv.baseUrl + ' (' + replicaSrv.chave + ')' : SERVERS.SIM.baseUrl}`);
   console.log(`Arquivos no Catálogo: ${trackedFiles.size}`);
   console.log(`Banco SQLite:         ${DB_FILE}`);
   console.log(`Pasta Evidências:     ${EVIDENCIAS_DIR}`);

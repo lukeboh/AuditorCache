@@ -12,8 +12,8 @@ if ($cdpTest -ne 200) {
         "--remote-debugging-port=9222",
         "--user-data-dir=$env:LOCALAPPDATA\Google\Chrome\DebugProfile",
         "--remote-allow-origins=*",
-        "https://resultados-sim.tse.jus.br/simulado/teste/app/index.html#/eleicao/21270/uf/br/cargo/1/vis/nominal/resultados",
-        "https://resultados-sim.tse.jus.br/simulado/teste/app/index.html#/eleicao/21270/uf/sp/mu/71072/zn/0001/cargo/1/vis/nominal/resumo-geral"
+        "https://resultados-sim.tse.jus.br/simulado/simulado/app/index.html#/eleicao/21270/uf/br/cargo/1/vis/nominal/resultados",
+        "https://resultados-sim.tse.jus.br/simulado/simulado/app/index.html#/eleicao/21270/uf/sp/mu/71072/zn/0001/cargo/1/vis/nominal/resumo-geral"
     )
     Start-Sleep -Seconds 3
 }

@@ -5,6 +5,22 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/pt-BR/).
 
+## [1.0.0.1] - 2026-09-14 - Hotfix Novos Servidores & Ciclos Dinâmicos
+
+### Corrigido
+- **Suporte Dinâmico a Ciclos de Eleição (`pl.c`):**
+  - Removido o prefixo hardcoded `tdtot2026/` das rotas e do catálogo de arquivos.
+  - O sistema agora extrai dinamicamente o diretório do ciclo (`ele2026`, `tdtot2026`, etc.) diretamente da propriedade `"c"` do arquivo mestre `ele-c.json`.
+  - Os 229 arquivos de totalização e configuração de urnas (`-cs.json`) dos novos servidores de teste passam a ser descobertos e monitorados com sucesso (HTTP 200).
+- **Descoberta de Eleições em Servidores Ativos:**
+  - A função de auto-descoberta (`discoverAvailableElections`) foi corrigida para usar o servidor de Origem ativo (`HMG_SIMULADO`) ou a réplica ativa (`SIMINTERESSADOS`), em vez de procurar cegamente a chave legada `'SIM'` mesmo inativa.
+- **Interceptador CDP do Chrome DevTools:**
+  - Atualizado o listener de rede do Chrome para fazer matching dinâmico das requisições com a `baseUrl` de todos os servidores ativos cadastrados, extraindo corretamente os caminhos relativos para URLs em `/simulado/` ou `/simulado/simulado/`.
+- **Cálculo de SLA Agnosticista a Nomes de Servidores:**
+  - As consultas SQLite de cálculo e reconstituição de SLA foram migradas para verificar `papel_servidor = 'ORIGEM'` e `papel_servidor = 'REPLICA'`, mantendo total retrocompatibilidade com bases legadas.
+- **Script de Inicialização `iniciar_monitor.ps1`:**
+  - Atualizadas as abas abertas no Chrome em depuração para o novo simulador (`/simulado/simulado/app/index.html`).
+
 ---
 
 ## [1.0.0] - 2026-09-12 - Versão Estável
