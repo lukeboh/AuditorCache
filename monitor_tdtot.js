@@ -9821,7 +9821,7 @@ function startDashboardServer() {
       req.on('end', () => {
         let params = {};
         try { params = JSON.parse(bodyStr); } catch {}
-        const chave = String(params.chave || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+        const chave = String(params.chave || '').trim().toUpperCase().replace(/[^A-Z0-9_\-]/g, '');
         const nome = String(params.nome || '').trim();
         let baseUrl = String(params.baseUrl || '').trim();
         const papel = params.papel === 'ORIGEM' ? 'ORIGEM' : 'REPLICA';
