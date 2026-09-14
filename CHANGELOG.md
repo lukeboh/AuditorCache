@@ -5,6 +5,17 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/pt-BR/).
 
+## [1.0.0.2] - 2026-09-14 - Hotfix Dossiê Forense de Regressões Detectadas
+
+### Corrigido
+- **Correção de ReferenceError (`dateHttp is not defined`):**
+  - Declarada a variável `const dateHttp = rawHeaders['date'] || '-'` no painel técnico de detalhes de auditoria forense (`renderTechDetailsInPanel`).
+  - Corrigida a renderização e abertura do modal "Dossiê Forense de Regressões Detectadas", garantindo a visualização íntegra da lista de ocorrências e de seus metadados de cabeçalho HTTP RFC 7234.
+- **Detecção Resiliente de Nó de Origem:**
+  - Atualizadas as referências ao estado global da API (`latestApiData.originKey`) na renderização dos cards de regressão e esquema cronológico, assegurando a estilização visual roxa (`tag-hmg-title` / `🟣 Origem Primária`).
+
+---
+
 ## [1.0.0.1] - 2026-09-14 - Hotfix Novos Servidores & Ciclos Dinâmicos
 
 ### Corrigido

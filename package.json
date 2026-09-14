@@ -1,6 +1,6 @@
 {
   "name": "auditor-cache",
-  "version": "1.0.0.1",
+  "version": "1.0.0.2",
   "description": "Sistema autônomo e contínuo de auditoria forense, validação cronológica e medição de SLA de propagação entre Origem (HMG) e Cache/CDN (SIM) dos arquivos da totalização de eleições do Tribunal Superior Eleitoral (TSE).",
   "main": "monitor_tdtot.js",
   "scripts": {

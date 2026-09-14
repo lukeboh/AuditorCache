@@ -16,7 +16,7 @@ const { DatabaseSync } = require('node:sqlite');
 const CDP_PORT = 9222;
 const DASHBOARD_PORT = 3333;
 const WORKSPACE_DIR = __dirname;
-let APP_VERSION = 'v1.0.0.1';
+let APP_VERSION = 'v1.0.0.2';
 try {
   const pkg = JSON.parse(fs.readFileSync(path.join(WORKSPACE_DIR, 'package.json'), 'utf8'));
   if (pkg.version) APP_VERSION = 'v' + pkg.version;
@@ -7502,7 +7502,7 @@ function setElText(id, val) {
         const isOriginServer = Boolean(
           (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
           (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
-          (typeof data !== 'undefined' && data && data.originKey === r.servidor)
+          (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
         );
         const serverBadgeClass = isOriginServer ? 'tag-hmg-title' : 'tag-sim-title';
         const serverRoleDesc = r.papel_servidor || (isOriginServer ? 'Fonte Oficial' : 'Cache Akamai');
@@ -7631,7 +7631,7 @@ function setElText(id, val) {
             const isOrigin = Boolean(
               (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
               (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
-              (typeof data !== 'undefined' && data && data.originKey === step.servidor)
+              (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === step.servidor)
             );
             
             const itemBg = isReg 
@@ -7894,10 +7894,11 @@ function setElText(id, val) {
       const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
       const etag = rawHeaders['etag'] || '-';
       const lastModified = rawHeaders['last-modified'] || '-';
+      const dateHttp = rawHeaders['date'] || '-';
       const isOriginReg = Boolean(
         (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
         (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
-        (typeof data !== 'undefined' && data && data.originKey === r.servidor)
+        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
       );
       const webServer = rawHeaders['server'] || (isOriginReg ? 'Apache Origin' : 'Akamai CDN');
       const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
