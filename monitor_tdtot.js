@@ -16,6 +16,11 @@ const { DatabaseSync } = require('node:sqlite');
 const CDP_PORT = 9222;
 const DASHBOARD_PORT = 3333;
 const WORKSPACE_DIR = __dirname;
+let APP_VERSION = 'v1.0.0.1';
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.join(WORKSPACE_DIR, 'package.json'), 'utf8'));
+  if (pkg.version) APP_VERSION = 'v' + pkg.version;
+} catch (e) {}
 const DB_FILE = path.join(WORKSPACE_DIR, 'tdtot_auditoria.db');
 const EVIDENCIAS_DIR = path.join(WORKSPACE_DIR, 'evidencias_raw');
 const VERSOES_DIR = path.join(WORKSPACE_DIR, 'versoes');
@@ -1240,7 +1245,7 @@ function generateHtmlReport(embeddedData = null) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dossiê Técnico Forense v1.0: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
+  <title>Dossiê Técnico Forense ${APP_VERSION}: Fonte HMG vs Cache SIM (TDTot TSE)${embeddedData ? ' [OFFLINE]' : ''}</title>
   <script>
     (function() {
       try {
@@ -1472,7 +1477,7 @@ function generateHtmlReport(embeddedData = null) {
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0</span></h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">${APP_VERSION}</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -4903,7 +4908,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TDTot v1.0 - Auditoria Dupla de Propagação: HMG vs SIM</title>
+  <title>TDTot ${APP_VERSION} - Auditoria Dupla de Propagação: HMG vs SIM</title>
   <script>
     (function() {
       try {
@@ -5187,7 +5192,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <!-- LINHA 1: Título, Status, Eleições, Servidores e Botões de Exportação à Direita -->
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;">
       <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">v1.0</span></h1>
+        <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;">🗳️ Auditoria Dupla: HMG ➔ SIM <span class="status-badge status-ok" style="font-size: 0.72rem; padding: 2px 7px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">${APP_VERSION}</span></h1>
         
         <!-- STATUS BADGE (30px) -->
         <span id="statusBadge" class="status-badge status-ok" onclick="openRegressoesModal()" title="Clique para abrir a auditoria forense detalhada de todas as regressões detectadas" style="height: 30px; box-sizing: border-box; padding: 0 12px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -9337,6 +9342,7 @@ function getComparisonPayload(rodadaId = null) {
   };
 
   return {
+    appVersion: APP_VERSION,
     servers: activeServersList,
     allServers: Array.from(knownServers.values()),
     originKey,
