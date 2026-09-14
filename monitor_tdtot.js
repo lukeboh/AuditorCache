@@ -1606,10 +1606,9 @@ function generateHtmlReport(embeddedData = null) {
         <select id="filterStatus" class="filter-select" onchange="applyFilters()">
           <option value="">Todos os Status</option>
           <option value="REG_ALL">🚨 Qualquer Regressão Detectada</option>
-          <option value="REG_INVERSAO">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
+          <option value="REG_INVERSAO">🚨 Inversão de Dados (DG ↗, DT ↘)</option>
           <option value="REG_TIME">🚨 Regressão de Geração (DG/HG)</option>
           <option value="REG_TOT">🚨 Regressão de Totalização (DT/HT)</option>
-          <option value="REG_ST">🚨 Regressão de Seções (ST)</option>
           <option value="ATRASADO">⏳ Apenas Cache Atrasado</option>
           <option value="SINCRONIZADO">✅ Apenas Sincronizados</option>
           <option value="SIM_TTL_LOW">⚡ SIM TTL Baixo (≤ 15s)</option>
@@ -1789,10 +1788,9 @@ function generateHtmlReport(embeddedData = null) {
         <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
         <select id="dossieRegFilterCriterion" onchange="applyFilters()" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:6px 8px; border-radius:6px; font-size:0.78rem;">
           <option value="">Todos os Critérios</option>
-          <option value="INVERSAO_DG_DT_ST">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
+          <option value="INVERSAO_DG_DT">🚨 Inversão de Dados (DG ↗, DT ↘)</option>
           <option value="TEMPO">DG/HG (Tempo Geração)</option>
           <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
-          <option value="SEÇÕES">ST (Seções Apuradas)</option>
           <option value="SEQUENCIAL">IDG (Sequencial)</option>
         </select>
       </div>
@@ -2559,10 +2557,6 @@ function generateHtmlReport(embeddedData = null) {
           const hmgRegTot = row.hmg?.criterion?.includes('TOTALIZAÇÃO');
           const simRegTot = row.sim?.criterion?.includes('TOTALIZAÇÃO');
           if (!hmgRegTot && !simRegTot) return false;
-        } else if (fStatus === 'REG_ST') {
-          const hmgRegSt = row.hmg?.criterion?.includes('SEÇÕES');
-          const simRegSt = row.sim?.criterion?.includes('SEÇÕES');
-          if (!hmgRegSt && !simRegSt) return false;
         } else if (fStatus === 'ATRASADO') {
           if (row.comparison?.status !== 'CACHE_ATRASADO') return false;
         } else if (fStatus === 'SINCRONIZADO') {
@@ -2620,14 +2614,13 @@ function generateHtmlReport(embeddedData = null) {
           const c = (reg.criterio || '').toUpperCase();
           const m = (reg.motivo || '').toUpperCase();
           const d = (reg.detalhes || '').toUpperCase();
-          if (dCrit === 'INVERSAO_DG_DT_ST') {
-            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+          if (dCrit === 'INVERSAO_DG_DT_ST' || dCrit === 'INVERSAO_DG_DT') {
+            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT');
             const dgAdv = Boolean(reg.dg_anterior && reg.dg_recebido && reg.hg_anterior && reg.hg_recebido && (
               reg.dg_recebido > reg.dg_anterior || (reg.dg_recebido === reg.dg_anterior && reg.hg_recebido >= reg.hg_anterior)
             ));
             const totReg = Boolean(reg.dt_recebido && reg.dt_anterior && (reg.dt_recebido < reg.dt_anterior || (reg.dt_recebido === reg.dt_anterior && reg.ht_recebido < reg.ht_anterior)));
-            const stReg = Boolean(reg.secoes_recebido !== null && reg.secoes_anterior !== null && Number(reg.secoes_recebido) < Number(reg.secoes_anterior));
-            if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+            if (!hasInversionTag && !(dgAdv && totReg)) return false;
           } else {
             if (!c.includes(dCrit) && !m.includes(dCrit)) return false;
           }
@@ -2637,19 +2630,16 @@ function generateHtmlReport(embeddedData = null) {
           const c = (reg.criterio || '').toUpperCase();
           const m = (reg.motivo || '').toUpperCase();
           const d = (reg.detalhes || '').toUpperCase();
-          const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+          const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT');
           const dgAdv = Boolean(reg.dg_anterior && reg.dg_recebido && reg.hg_anterior && reg.hg_recebido && (
             reg.dg_recebido > reg.dg_anterior || (reg.dg_recebido === reg.dg_anterior && reg.hg_recebido >= reg.hg_anterior)
           ));
           const totReg = Boolean(reg.dt_recebido && reg.dt_anterior && (reg.dt_recebido < reg.dt_anterior || (reg.dt_recebido === reg.dt_anterior && reg.ht_recebido < reg.ht_anterior)));
-          const stReg = Boolean(reg.secoes_recebido !== null && reg.secoes_anterior !== null && Number(reg.secoes_recebido) < Number(reg.secoes_anterior));
-          if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+          if (!hasInversionTag && !(dgAdv && totReg)) return false;
         } else if (fStatus === 'REG_TIME') {
           if (!reg.criterio?.includes('TEMPO') && !reg.motivo?.includes('TEMPORAL')) return false;
         } else if (fStatus === 'REG_TOT') {
           if (!reg.criterio?.includes('TOTALIZAÇÃO') && !reg.motivo?.includes('TOTALIZAÇÃO')) return false;
-        } else if (fStatus === 'REG_ST') {
-          if (!reg.criterio?.includes('SEÇÕES') && !reg.motivo?.includes('SEÇÕES')) return false;
         }
 
         if (dGrn) {
@@ -3074,7 +3064,6 @@ function generateHtmlReport(embeddedData = null) {
         if (r.criterio) {
           if (r.criterio.includes('TEMPO') || r.criterio.includes('DG/HG')) critBadges.push('<span class="badge badge-danger">DG/HG TEMPO</span>');
           if (r.criterio.includes('TOTALIZAÇÃO')) critBadges.push('<span class="badge badge-danger">DT/HT TOTALIZAÇÃO</span>');
-          if (r.criterio.includes('SEÇÕES')) critBadges.push('<span class="badge badge-danger">ST SEÇÕES</span>');
           if (r.criterio.includes('SEQUENCIAL') || r.criterio.includes('IDG')) critBadges.push('<span class="badge badge-danger">IDG SEQUENCIAL</span>');
         }
 
@@ -3084,21 +3073,14 @@ function generateHtmlReport(embeddedData = null) {
 
         const prevStStr = (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior + ' seç' : '-');
         const currStStr = (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido + ' seç' : '-');
-        const isStRegression = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
 
         const dgAdvOrSame = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
           r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
         ));
-        const isInversion = Boolean((r.criterio && r.criterio.includes('INVERSÃO')) || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && (isTotRegression || isStRegression)));
+        const isInversion = Boolean((r.criterio && r.criterio.includes('INVERSÃO')) || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && isTotRegression));
 
-        if (isInversion) {
-          if (isTotRegression && isStRegression) {
-            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém DT/HT e ST retrocederam!">🚨 INVERSÃO: DG ↗ | DT/ST ↘</span>');
-          } else if (isTotRegression) {
-            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span>');
-          } else if (isStRegression) {
-            critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Seções Apuradas (ST) diminuíram!">🚨 INVERSÃO: DG ↗ | ST ↘</span>');
-          }
+        if (isInversion && isTotRegression) {
+          critBadges.push('<span class="badge" style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span>');
         }
 
         if (critBadges.length === 0) critBadges.push('<span class="badge badge-danger">REGRESSÃO FORENSE</span>');
@@ -3336,7 +3318,6 @@ function generateHtmlReport(embeddedData = null) {
               '<span style="color:#10b981;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</span>' +
               '<span style="' + (dgAdvOrSame ? 'color:#10b981;' : 'color:#ef4444; font-weight:bold;') + '">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
               (isTotRegression ? (' <span style="background:rgba(249,115,22,0.15); border:1px solid rgba(249,115,22,0.3); padding:1px 5px; border-radius:3px; color:#fb923c;"><span style="color:#94a3b8;">DT:</span> ' + (r.dt_anterior ? r.dt_anterior.substring(0, 5) + ' ' + (r.ht_anterior || '') : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.dt_recebido ? r.dt_recebido.substring(0, 5) + ' ' + (r.ht_recebido || '') : '-') + ' ↘</strong></span>') : '') +
-              (isStRegression ? (' <span style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); padding:1px 5px; border-radius:3px; color:#f472b6;"><span style="color:#94a3b8;">ST:</span> ' + (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido : '-') + ' ↘</strong></span>') : '') +
               (r.idg_anterior ? ('<span style="color:#94a3b8; margin-left:4px;">(IDG: ' + r.idg_anterior + ' ➔ <strong style="color:#fca5a5;">' + (r.idg_recebido || '-') + '</strong>)</span>') : '') +
             '</div>' +
           '</div>' +
@@ -3371,7 +3352,7 @@ function generateHtmlReport(embeddedData = null) {
                   '<span style="color:#94a3b8;">Totalização:</span>' +
                   '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
                   '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
-                  '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
+                  '<span style="color:#f8fafc;">' + currStStr + '</span>' +
                   '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
                   '<div>' + currIdgHtml + '</div>' +
                 '</div>' +
@@ -4362,7 +4343,6 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
   let isTimeRegression = false;
   let isTotTimeRegression = false;
-  let isStRegression = false;
   let isIdgRegression = false;
   const reasons = [];
 
@@ -4382,15 +4362,10 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     reasons.push(`REGRESSÃO DE TOTALIZAÇÃO (DT/HT): retrocedeu de ${prev.dt} ${prev.ht} para ${dt} ${ht} (-${diffTotSec}s)`);
   }
 
-  // Critério 3: Monotonicidade de Seções Totalizadas (ST)
-  // A quantidade acumulada de seções apuradas nunca pode diminuir no mesmo arquivo
-  if (!isSameSt && st !== null && prev.st !== null && st < prev.st) {
-    isStRegression = true;
-    const diffSt = prev.st - st;
-    reasons.push(`REGRESSÃO DE SEÇÕES APURADAS (ST): retrocedeu de ${prev.st} para ${st} seções (-${diffSt})`);
-  }
+  // Nota de Negócio: O número de seções totalizadas (ST) pode legitimamente regredir
+  // em caso de anulação, reprocessamento ou totalização suplementar, sendo negocialmente aceito.
 
-  // Critério 4: Monotonicidade Sequencial (IDG) - Apenas rastreio/anomalia (não bloqueante no Oracle RAC)
+  // Critério 3: Monotonicidade Sequencial (IDG) - Apenas rastreio/anomalia (não bloqueante no Oracle RAC)
   if (!isSameIdg && idgNum !== null && prev.idgNum !== null && idgNum < prev.idgNum) {
     isIdgRegression = true;
     const diffIdg = prev.idgNum - idgNum;
@@ -4399,44 +4374,28 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
   // Incoerência de Geração vs Totalização
   const isDgAdvancedOrSame = (!isTimeRegression && genTime !== null && prev.genTime !== null && genTime >= prev.genTime);
-  const isInversion = isDgAdvancedOrSame && (isTotTimeRegression || isStRegression);
+  const isInversion = isDgAdvancedOrSame && isTotTimeRegression;
 
   if (isInversion) {
-    if (isTotTimeRegression && isStRegression) {
-      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE TOTALIZAÇÃO: Arquivo gerado mais recentemente (DG/HG avançou), mas a Totalização (DT/HT) e Seções Apuradas (ST) retrocederam!`);
-    } else if (isTotTimeRegression) {
-      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE TOTALIZAÇÃO: Arquivo gerado mais recentemente (DG/HG avançou), mas a Totalização (DT/HT) retrocedeu!`);
-    } else if (isStRegression) {
-      reasons.push(`[INVERSÃO_DG_DT_ST] 🚨 INVERSÃO DE SEÇÕES: Arquivo gerado mais recentemente (DG/HG avançou), mas as Seções Apuradas (ST) diminuíram!`);
-    }
+    reasons.push(`[INVERSÃO_DG_DT] 🚨 INVERSÃO DE TOTALIZAÇÃO: Arquivo gerado mais recentemente (DG/HG avançou), mas a Totalização (DT/HT) retrocedeu!`);
   } else if (!isTimeRegression && isIdgRegression && genTime !== null && prev.genTime !== null && genTime > prev.genTime) {
     reasons.push(`🚨 ANOMALIA DE GERAÇÃO: DG/HG avançou no tempo, mas IDG retrocedeu sequencialmente!`);
   }
 
-  // Auditoria Estrita: Qualquer regressão em DG/HG, DT/HT ou ST é tratada como REGRESSÃO FORENSE!
-  const isRegression = isTimeRegression || isTotTimeRegression || isStRegression;
+  // Auditoria Estrita: Regressão temporal em DG/HG ou DT/HT é tratada como REGRESSÃO FORENSE!
+  const isRegression = isTimeRegression || isTotTimeRegression;
 
   const violatedCriteria = [];
   if (isTimeRegression) violatedCriteria.push('TEMPO (DG/HG)');
   if (isTotTimeRegression) {
-    if (isInversion && !isStRegression) {
+    if (isInversion) {
       violatedCriteria.push('TOTALIZAÇÃO (DT/HT) [INVERSÃO: DG ↗, DT ↘]');
     } else {
       violatedCriteria.push('TOTALIZAÇÃO (DT/HT)');
     }
   }
-  if (isStRegression) {
-    if (isInversion && !isTotTimeRegression) {
-      violatedCriteria.push('SEÇÕES (ST) [INVERSÃO: DG ↗, ST ↘]');
-    } else {
-      violatedCriteria.push('SEÇÕES (ST)');
-    }
-  }
 
   let criterion = isRegression ? violatedCriteria.join(' + ') : 'NORMAL';
-  if (isInversion && isTotTimeRegression && isStRegression) {
-    criterion = 'TOTALIZAÇÃO (DT/HT) + SEÇÕES (ST) [INVERSÃO: DG ↗, DT/ST ↘]';
-  }
 
   if (isRegression) {
     currentMeta.status = 'REGRESSAO_DETECTADA';
@@ -4452,7 +4411,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     console.log(`\n${RED}${BOLD}======================================================================${RESET}`);
     console.log(`${RED}${BOLD}🚨🚨 [ALERTA: REGRESSÃO NO SERVIDOR ${serverKey} (${SERVERS[serverKey]?.role})!] 🚨🚨${RESET}`);
     if (isInversion) {
-      console.log(`${RED}${BOLD}🚨🚨 [HIPÓTESE DETECTADA: INVERSÃO DE DADOS (DG/HG AVANÇOU, DT/ST RETROCEDEU)!] 🚨🚨${RESET}`);
+      console.log(`${RED}${BOLD}🚨🚨 [HIPÓTESE DETECTADA: INVERSÃO DE DADOS (DG/HG AVANÇOU, DT RETROCEDEU)!] 🚨🚨${RESET}`);
     }
     console.log(`${RED}Critério Violado:${RESET} ${BOLD}${criterion}${RESET}`);
     console.log(`${RED}Arquivo:${RESET}          ${BOLD}${filename}${RESET} (${source})`);
@@ -5421,7 +5380,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <option value="REG_ALL">🚨 Qualquer Regressão Detectada</option>
           <option value="REG_TIME">🚨 Regressão de Geração (DG/HG)</option>
           <option value="REG_TOT">🚨 Regressão de Totalização (DT/HT)</option>
-          <option value="REG_ST">🚨 Regressão de Seções (ST)</option>
           <option value="ATRASADO">⏳ Apenas Cache Atrasado</option>
           <option value="SINCRONIZADO">✅ Apenas Sincronizados</option>
           <option value="SIM_TTL_LOW">⚡ SIM TTL Baixo (≤ 15s)</option>
@@ -5951,10 +5909,6 @@ function setElText(id, val) {
           const hmgRegTot = row.hmg?.criterion?.includes('TOTALIZAÇÃO');
           const simRegTot = row.sim?.criterion?.includes('TOTALIZAÇÃO');
           if (!hmgRegTot && !simRegTot) return false;
-        } else if (fStatus === 'REG_ST') {
-          const hmgRegSt = row.hmg?.criterion?.includes('SEÇÕES');
-          const simRegSt = row.sim?.criterion?.includes('SEÇÕES');
-          if (!hmgRegSt && !simRegSt) return false;
         } else if (fStatus === 'ATRASADO') {
           if (row.comparison.status !== 'CACHE_ATRASADO') return false;
         } else if (fStatus === 'SINCRONIZADO') {
@@ -7441,14 +7395,13 @@ function setElText(id, val) {
           const c = (r.criterio || '').toUpperCase();
           const m = (r.motivo || '').toUpperCase();
           const d = (r.detalhes || '').toUpperCase();
-          if (criterion === 'INVERSAO_DG_DT_ST') {
-            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT_ST') || d.includes('INVERSÃO_DG_DT_ST');
+          if (criterion === 'INVERSAO_DG_DT_ST' || criterion === 'INVERSAO_DG_DT') {
+            const hasInversionTag = c.includes('INVERSÃO') || m.includes('INVERSÃO') || d.includes('INVERSÃO') || m.includes('INVERSÃO_DG_DT');
             const dgAdv = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
               r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
             ));
             const totReg = Boolean(r.dt_recebido && r.dt_anterior && (r.dt_recebido < r.dt_anterior || (r.dt_recebido === r.dt_anterior && r.ht_recebido < r.ht_anterior)));
-            const stReg = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
-            if (!hasInversionTag && !(dgAdv && (totReg || stReg))) return false;
+            if (!hasInversionTag && !(dgAdv && totReg)) return false;
           } else {
             if (!c.includes(criterion) && !m.includes(criterion)) return false;
           }
@@ -7524,9 +7477,6 @@ function setElText(id, val) {
         if (crit.includes('TOTALIZAÇÃO') || (r.motivo && r.motivo.includes('TOTALIZAÇÃO'))) {
           critBadgesHtml += '<span style="background:rgba(249,115,22,0.25); color:#f97316; border:1px solid #f97316; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:700;">🚨 TOTALIZAÇÃO (DT/HT)</span> ';
         }
-        if (crit.includes('SEÇÕES') || (r.motivo && r.motivo.includes('SEÇÕES APURADAS'))) {
-          critBadgesHtml += '<span style="background:rgba(236,72,153,0.25); color:#ec4899; border:1px solid #ec4899; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:700;">🚨 SEÇÕES (ST)</span> ';
-        }
         if (r.motivo && r.motivo.includes('ANOMALIA SEQUENCIAL (IDG)')) {
           critBadgesHtml += '<span style="background:rgba(168,85,247,0.25); color:#c084fc; border:1px solid #c084fc; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:600;">⚠️ IDG</span> ';
         }
@@ -7540,21 +7490,14 @@ function setElText(id, val) {
 
         const prevStStr = (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior + ' seç' : '-');
         const currStStr = (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido + ' seç' : '-');
-        const isStRegression = Boolean(r.secoes_recebido !== null && r.secoes_anterior !== null && Number(r.secoes_recebido) < Number(r.secoes_anterior));
 
         const dgAdvOrSame = Boolean(r.dg_anterior && r.dg_recebido && r.hg_anterior && r.hg_recebido && (
           r.dg_recebido > r.dg_anterior || (r.dg_recebido === r.dg_anterior && r.hg_recebido >= r.hg_anterior)
         ));
-        const isInversion = Boolean(crit.includes('INVERSÃO') || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && (isTotRegression || isStRegression)));
+        const isInversion = Boolean(crit.includes('INVERSÃO') || (r.motivo && r.motivo.includes('INVERSÃO')) || (r.detalhes && r.detalhes.includes('INVERSÃO')) || (dgAdvOrSame && isTotRegression));
 
-        if (isInversion) {
-          if (isTotRegression && isStRegression) {
-            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém DT/HT e ST retrocederam!">🚨 INVERSÃO: DG ↗ | DT/ST ↘</span> ';
-          } else if (isTotRegression) {
-            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span> ';
-          } else if (isStRegression) {
-            critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Seções Apuradas (ST) diminuíram!">🚨 INVERSÃO: DG ↗ | ST ↘</span> ';
-          }
+        if (isInversion && isTotRegression) {
+          critBadgesHtml += '<span style="background:rgba(244,63,94,0.3); color:#fda4af; border:1px solid #f43f5e; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:800;" title="Arquivo mais novo em DG/HG, porém Totalização (DT/HT) retrocedeu!">🚨 INVERSÃO: DG ↗ | DT ↘</span> ';
         }
 
         const uf = (r.fileMeta && r.fileMeta.uf) ? r.fileMeta.uf : '-';
@@ -7759,7 +7702,6 @@ function setElText(id, val) {
               '<span style="color:#10b981;">' + (r.dg_anterior || '-') + ' ' + (r.hg_anterior || '-') + '</span>' +
               '<span style="' + (dgAdvOrSame ? 'color:#10b981;' : 'color:#ef4444; font-weight:bold;') + '">➔ ' + (r.dg_recebido || '-') + ' ' + (r.hg_recebido || '-') + '</span>' +
               (isTotRegression ? (' <span style="background:rgba(249,115,22,0.15); border:1px solid rgba(249,115,22,0.3); padding:1px 5px; border-radius:3px; color:#fb923c;"><span style="color:#94a3b8;">DT:</span> ' + (r.dt_anterior ? r.dt_anterior.substring(0, 5) + ' ' + (r.ht_anterior || '') : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.dt_recebido ? r.dt_recebido.substring(0, 5) + ' ' + (r.ht_recebido || '') : '-') + ' ↘</strong></span>') : '') +
-              (isStRegression ? (' <span style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); padding:1px 5px; border-radius:3px; color:#f472b6;"><span style="color:#94a3b8;">ST:</span> ' + (r.secoes_anterior !== null && r.secoes_anterior !== undefined ? r.secoes_anterior : '-') + ' ➔ <strong style="color:#ef4444;">' + (r.secoes_recebido !== null && r.secoes_recebido !== undefined ? r.secoes_recebido : '-') + ' ↘</strong></span>') : '') +
               (r.idg_anterior ? ('<span style="color:#94a3b8; margin-left:4px;">(IDG: ' + r.idg_anterior + ' ➔ <strong style="color:#fca5a5;">' + (r.idg_recebido || '-') + '</strong>)</span>') : '') +
             '</div>' +
           '</div>' +
@@ -7824,7 +7766,7 @@ function setElText(id, val) {
                 '<span style="color:#94a3b8;">Totalização:</span>' +
                 '<span style="' + (isTotRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currTotStr + '</span>' +
                 '<span style="color:#94a3b8;">Seções Apuradas:</span>' +
-                '<span style="' + (isStRegression ? 'color:#ef4444; font-weight:bold;' : 'color:#f8fafc;') + '">' + currStStr + '</span>' +
+                '<span style="color:#f8fafc;">' + currStStr + '</span>' +
                 '<span style="color:#94a3b8;">IDG (Sequencial):</span>' +
                 '<div>' + currIdgHtml + '</div>' +
               '</div>' +
@@ -8655,10 +8597,9 @@ function setElText(id, val) {
           <label style="font-size:0.75rem; color:#94a3b8; font-weight:700;">Critério:</label>
           <select id="regFilterCriterion" onchange="renderFilteredRegressoes(true)" style="background:#1e293b; border:1px solid #475569; color:#f8fafc; padding:5px 8px; border-radius:6px; font-size:0.78rem;">
             <option value="">Todos os Critérios</option>
-            <option value="INVERSAO_DG_DT_ST">🚨 Inversão de Dados (DG ↗, DT/ST ↘)</option>
+            <option value="INVERSAO_DG_DT">🚨 Inversão de Dados (DG ↗, DT ↘)</option>
             <option value="TEMPO">DG/HG (Tempo Geração)</option>
             <option value="TOTALIZAÇÃO">DT/HT (Totalização)</option>
-            <option value="SEÇÕES">ST (Seções Apuradas)</option>
             <option value="SEQUENCIAL">IDG (Sequencial)</option>
           </select>
         </div>
@@ -9411,8 +9352,8 @@ function getEnrichedRegressions(filters = {}) {
   }
 
   if (criterionFilter) {
-    if (criterionFilter === 'INVERSAO_DG_DT_ST') {
-      sql += "AND (criterio LIKE '%INVERSÃO%' OR motivo LIKE '%INVERSÃO%' OR detalhes LIKE '%INVERSÃO_DG_DT_ST%') ";
+    if (criterionFilter === 'INVERSAO_DG_DT_ST' || criterionFilter === 'INVERSAO_DG_DT') {
+      sql += "AND (criterio LIKE '%INVERSÃO%' OR motivo LIKE '%INVERSÃO%' OR detalhes LIKE '%INVERSÃO%') ";
     } else {
       sql += 'AND (criterio LIKE ? OR motivo LIKE ?) ';
       params.push(`%${criterionFilter}%`, `%${criterionFilter}%`);
@@ -9663,11 +9604,11 @@ function startDashboardServer() {
         });
 
         // Ensure all inversion cases are always bundled into standalone export
-        if (criterio !== 'INVERSAO_DG_DT_ST' && !q && !grn) {
+        if (criterio !== 'INVERSAO_DG_DT_ST' && criterio !== 'INVERSAO_DG_DT' && !q && !grn) {
           const invPayload = getEnrichedRegressions({
             limit: 2000,
             allRodada: true,
-            criterio: 'INVERSAO_DG_DT_ST'
+            criterio: 'INVERSAO_DG_DT'
           });
           const existingIds = new Set(regsPayload.regressoes.map(r => r.id));
           for (const inv of invPayload.regressoes) {

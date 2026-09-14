@@ -18,6 +18,11 @@ e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/p
   - Atualizado o listener de rede do Chrome para fazer matching dinâmico das requisições com a `baseUrl` de todos os servidores ativos cadastrados, extraindo corretamente os caminhos relativos para URLs em `/simulado/` ou `/simulado/simulado/`.
 - **Cálculo de SLA Agnosticista a Nomes de Servidores:**
   - As consultas SQLite de cálculo e reconstituição de SLA foram migradas para verificar `papel_servidor = 'ORIGEM'` e `papel_servidor = 'REPLICA'`, mantendo total retrocompatibilidade com bases legadas.
+- **Remoção de Falso-Positivo por Regressão de Seções (ST):**
+  - Removida a detecção de regressão baseada na contagem de seções totalizadas (`st`), uma vez que variações regressivas nessa métrica são negocialmente aceitas (decorrentes de reprocessamento, anulação de urnas ou totalizações suplementares).
+  - Atualizados os critérios combinados (`TEMPO + TOTALIZAÇÃO + ST` e `TEMPO + ST`) para manter unicamente as regressões temporais de geração (`dg/hg`) e totalização (`dt/ht`).
+  - Higienização da base SQLite (`tdtot_auditoria.db`) com expurgo de 677 registros exclusivos de ST, atualização de 456 registros combinados e normalização de 2.872 leituras na tabela `leituras`.
+  - Atualizada a interface do Dossiê e da Matriz de Auditoria, ajustando os filtros e badges de inversão para `INVERSÃO: DG ↗ | DT ↘`.
 - **Script de Inicialização `iniciar_monitor.ps1`:**
   - Atualizadas as abas abertas no Chrome em depuração para o novo simulador (`/simulado/simulado/app/index.html`).
 
