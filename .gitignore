@@ -18,6 +18,7 @@ temp_zips/
 # Arquivos compactados de distribuição/backup
 *.zip
 *.tar.gz
+relatorio_regressoes_*.html
 
 # Backups e rascunhos de desenvolvimento
 *.bak

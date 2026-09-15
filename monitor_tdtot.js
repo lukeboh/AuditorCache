@@ -16,11 +16,36 @@ const { DatabaseSync } = require('node:sqlite');
 const CDP_PORT = 9222;
 const DASHBOARD_PORT = 3333;
 const WORKSPACE_DIR = __dirname;
-let APP_VERSION = 'v1.0.0.2';
+let APP_VERSION = 'v1.0.0.4';
 try {
   const pkg = JSON.parse(fs.readFileSync(path.join(WORKSPACE_DIR, 'package.json'), 'utf8'));
   if (pkg.version) APP_VERSION = 'v' + pkg.version;
 } catch (e) {}
+
+/**
+ * Decodifica o IPv4 da lâmina Ghost interna da Akamai a partir do Ghost Reference Number (GRN).
+ * Padrão GRN: 0.[IP_HEX_LITTLE_ENDIAN].[TIMESTAMP_EPOCH].[REQ_HASH]
+ * Exemplo: 0.e60f1702.1789495538.e80c39b -> e6 0f 17 02 -> 2.23.15.230
+ */
+function hexToIp(hex) {
+  if (!hex || typeof hex !== 'string') return null;
+  const clean = hex.trim().toLowerCase();
+  if (clean.length !== 8) return null;
+  const b = clean.match(/../g);
+  if (!b || b.length !== 4) return null;
+  return `${parseInt(b[3], 16)}.${parseInt(b[2], 16)}.${parseInt(b[1], 16)}.${parseInt(b[0], 16)}`;
+}
+
+function decodeAkamaiGrn(grn) {
+  if (!grn || typeof grn !== 'string') return null;
+  const parts = grn.trim().split('.');
+  if (parts.length >= 4 && parts[1].length === 8) {
+    const ghostIp = hexToIp(parts[1]);
+    const epoch = parseInt(parts[2], 10);
+    return { ghostIp, epoch: isNaN(epoch) ? null : epoch, hash: parts[3] };
+  }
+  return null;
+}
 const DB_FILE = path.join(WORKSPACE_DIR, 'tdtot_auditoria.db');
 const EVIDENCIAS_DIR = path.join(WORKSPACE_DIR, 'evidencias_raw');
 const VERSOES_DIR = path.join(WORKSPACE_DIR, 'versoes');
@@ -317,6 +342,9 @@ try { db.exec('ALTER TABLE leituras ADD COLUMN latency_ms INTEGER;'); } catch (e
 try { db.exec('ALTER TABLE regressoes ADD COLUMN call_time_iso TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN call_time_unix INTEGER;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN latency_ms INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN ghost_ip TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN ghost_ip TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE regressoes ADD COLUMN server_ip TEXT;'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_arquivo_time ON leituras (arquivo, timestamp_unix);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_call_time ON leituras (arquivo, call_time_unix);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_time ON regressoes (timestamp_iso);'); } catch (e) {}
@@ -324,15 +352,18 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_grn ON regressoes (akam
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_grn ON leituras (akamai_grn);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_headers ON regressoes (headers_json);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_req_headers ON leituras (request_headers_json);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_ghost_ip ON leituras (ghost_ip);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_ghost_ip ON regressoes (ghost_ip);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_server_ip ON regressoes (server_ip);'); } catch (e) {}
 
 const stmtInsertLeitura = db.prepare(`
-  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json, ghost_ip)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertRegressao = db.prepare(`
-  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido, akamai_grn, call_time_iso, call_time_unix, latency_ms, headers_json, request_headers_json)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO regressoes (timestamp_iso, servidor, papel_servidor, arquivo, criterio, motivo, idg_anterior, dg_anterior, hg_anterior, secoes_anterior, idg_recebido, dg_recebido, hg_recebido, secoes_recebido, evidencia_raw_path, detalhes, dt_anterior, ht_anterior, dt_recebido, ht_recebido, akamai_grn, call_time_iso, call_time_unix, latency_ms, headers_json, request_headers_json, server_ip, ghost_ip)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertComparativo = db.prepare(`
@@ -1141,6 +1172,7 @@ function getComparison(relPath) {
       cdnStatus: rState?.cdnCacheStatus || '-',
       etag: rState?.etag || '-',
       serverIp: rState?.serverIp || '-',
+      ghostIp: rState?.ghostIp || (rState?.akamaiGrn ? decodeAkamaiGrn(rState.akamaiGrn)?.ghostIp : null) || '-',
       server: rState?.serverHeader || '-',
       akamaiGrn: rState?.akamaiGrn || '-'
     });
@@ -1166,6 +1198,7 @@ function getComparison(relPath) {
       etag: primaryReplicaState.etag || '-',
       server: primaryReplicaState.serverHeader || 'Edge/CDN',
       serverIp: primaryReplicaState.serverIp || '-',
+      ghostIp: primaryReplicaState.ghostIp || (primaryReplicaState.akamaiGrn ? decodeAkamaiGrn(primaryReplicaState.akamaiGrn)?.ghostIp : null) || '-',
       akamaiGrn: primaryReplicaState.akamaiGrn || '-',
       lastModified: primaryReplicaState.lastModifiedHeader || '-'
     },
@@ -2977,6 +3010,80 @@ function generateHtmlReport(embeddedData = null) {
       return (d + ' ' + h).trim() + (i ? ('#' + i) : '');
     }
 
+    function decodeAkamaiGrnClient(grn) {
+      if (!grn || typeof grn !== 'string') return null;
+      const parts = grn.trim().split('.');
+      if (parts.length < 4) return null;
+      const hex = parts[1];
+      if (hex.length !== 8) return null;
+      const octets = [];
+      for (let i = 6; i >= 0; i -= 2) {
+        octets.push(parseInt(hex.substr(i, 2), 16));
+      }
+      return octets.join('.');
+    }
+
+    function buildVersionMapForRegression(r) {
+      if (!r) return new Map();
+      const timelineList = r.timeline || [];
+      const versionMap = new Map();
+      let verCounter = 1;
+
+      for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
+        const step = timelineList[tIdx];
+        const vKey = getVersionKey(step.dg, step.hg, step.idg);
+        if (vKey && !versionMap.has(vKey)) {
+          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+          versionMap.set(vKey, {
+            index: verCounter,
+            label: 'V' + verCounter,
+            palette: VERSION_PALETTES[paletteIndex],
+            dg: step.dg || '',
+            hg: step.hg || '',
+            idg: step.idg || '',
+            count: 0
+          });
+          verCounter++;
+        }
+        if (vKey && versionMap.has(vKey)) {
+          versionMap.get(vKey).count++;
+        }
+      }
+
+      const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
+      const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
+
+      if (prevVKey && !versionMap.has(prevVKey)) {
+        const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+        versionMap.set(prevVKey, {
+          index: verCounter,
+          label: 'V' + verCounter,
+          palette: VERSION_PALETTES[paletteIndex],
+          dg: r.dg_anterior || '',
+          hg: r.hg_anterior || '',
+          idg: r.idg_anterior || '',
+          count: 0
+        });
+        verCounter++;
+      }
+
+      if (currVKey && !versionMap.has(currVKey)) {
+        const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+        versionMap.set(currVKey, {
+          index: verCounter,
+          label: 'V' + verCounter,
+          palette: VERSION_PALETTES[paletteIndex],
+          dg: r.dg_recebido || '',
+          hg: r.hg_recebido || '',
+          idg: r.idg_recebido || '',
+          count: 0
+        });
+        verCounter++;
+      }
+
+      return versionMap;
+    }
+
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -3099,60 +3206,8 @@ function generateHtmlReport(embeddedData = null) {
 
         // Construção do Esquema Cronológico (Linha do Tempo de Requisições)
         const timelineList = r.timeline || [];
-        const versionMap = new Map();
-        let verCounter = 1;
-
-        for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
-          const step = timelineList[tIdx];
-          const vKey = getVersionKey(step.dg, step.hg, step.idg);
-          if (vKey && !versionMap.has(vKey)) {
-            const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-            versionMap.set(vKey, {
-              index: verCounter,
-              label: 'V' + verCounter,
-              palette: VERSION_PALETTES[paletteIndex],
-              dg: step.dg || '',
-              hg: step.hg || '',
-              idg: step.idg || '',
-              count: 0
-            });
-            verCounter++;
-          }
-          if (vKey && versionMap.has(vKey)) {
-            versionMap.get(vKey).count++;
-          }
-        }
-
-        const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
-        const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
-
-        if (prevVKey && !versionMap.has(prevVKey)) {
-          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-          versionMap.set(prevVKey, {
-            index: verCounter,
-            label: 'V' + verCounter,
-            palette: VERSION_PALETTES[paletteIndex],
-            dg: r.dg_anterior || '',
-            hg: r.hg_anterior || '',
-            idg: r.idg_anterior || '',
-            count: 0
-          });
-          verCounter++;
-        }
-
-        if (currVKey && !versionMap.has(currVKey)) {
-          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-          versionMap.set(currVKey, {
-            index: verCounter,
-            label: 'V' + verCounter,
-            palette: VERSION_PALETTES[paletteIndex],
-            dg: r.dg_recebido || '',
-            hg: r.hg_recebido || '',
-            idg: r.idg_recebido || '',
-            count: 0
-          });
-          verCounter++;
-        }
+        // Mapeamento e identificação de versões distintas para a trilha visual
+        const versionMap = buildVersionMapForRegression(r);
 
         let timelineHtml = '';
         if (timelineList.length > 0) {
@@ -3193,7 +3248,7 @@ function generateHtmlReport(embeddedData = null) {
             const latencyBadge = (step.latency_ms !== null && step.latency_ms !== undefined) 
               ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
               : '';
-            const isReg = step.isRegressionPoint;
+            const isReg = Boolean(step.isRegressionPoint || step.id === r.id);
             const isOrigin = Boolean(
               (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
               (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
@@ -3207,7 +3262,7 @@ function generateHtmlReport(embeddedData = null) {
             
             const badgeServidor = isOrigin ? 'tag-hmg-title' : 'tag-sim-title';
             const statusLabel = isReg 
-              ? '<span style="background:#dc2626; color:#fff; font-weight:700; padding:2px 8px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite;">🚨 DETECÇÃO DE REVERSÃO!</span>'
+              ? '<span style="background:#dc2626; color:#fff; font-weight:800; padding:2px 8px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite; box-shadow:0 0 10px rgba(220,38,38,0.5);">🚨 REQUISIÇÃO CAUSADORA DO CASO FORENSE</span>'
               : (isOrigin ? '<span style="color:#c084fc; font-weight:600; font-size:0.72rem;">🟣 Origem Primária</span>' : '<span style="color:#10b981; font-weight:600; font-size:0.72rem;">✓ Leitura Normal</span>');
 
             const stepDgHg = (step.dg || '-') + ' ' + (step.hg || '-');
@@ -3229,7 +3284,7 @@ function generateHtmlReport(embeddedData = null) {
               escapeHtml(stepIdg) +
             '</span>') : '';
 
-            timelineHtml += '<div class="' + itemClass + '" style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
+            timelineHtml += '<div id="dossieTimelineStep_' + r.id + '_' + tIdx + '" class="' + itemClass + ' timeline-step-row" data-reg-id="' + r.id + '" data-step-index="' + tIdx + '" onclick="event.stopPropagation(); selectDossieTimelineStep(' + r.id + ', ' + tIdx + ');" style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem; cursor:pointer; transition:all 0.15s ease;">' +
               '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">' +
                 '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
                   '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;" title="Instante de envio da requisição (Disparo)">• ' + stepTime + '</strong>' +
@@ -3240,12 +3295,16 @@ function generateHtmlReport(embeddedData = null) {
                   (stepSt ? '<span style="font-family:monospace; color:#34d399; font-size:0.72rem;">' + stepSt + '</span>' : '') +
                   (stepTot ? '<span style="font-family:monospace; color:#fbbf24; font-size:0.72rem;">' + stepTot + '</span>' : '') +
                 '</div>' +
-                '<div>' + statusLabel + '</div>' +
+                '<div style="display:flex; align-items:center; gap:6px;">' +
+                  statusLabel +
+                  '<button type="button" id="btnDossieStepInspect_' + r.id + '_' + tIdx + '" onclick="event.stopPropagation(); selectDossieTimelineStep(' + r.id + ', ' + tIdx + ');" class="btn-copy" style="font-size:0.70rem; padding:2px 8px; background:#1e293b; border:1px solid #38bdf8; color:#38bdf8; border-radius:4px; cursor:pointer;" title="Inspecionar metadados e headers desta requisição">🔍 Inspecionar 👉</button>' +
+                '</div>' +
               '</div>' +
 
               '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:#94a3b8; font-family:monospace; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px; margin-top:4px;">' +
                 '<span>⏱️ Chamada: <strong style="color:#e2e8f0;">' + ((step.call_time_iso ? step.call_time_iso.slice(11, 19) : stepTime)) + '</strong></span>' +
-                '<span>🌐 IP Borda: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
+                '<span>🌐 VIP TCP: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
+                ((step.ghost_ip || (step.akamai_grn ? decodeAkamaiGrnClient(step.akamai_grn) : null)) ? ('<span>⚡ Ghost: <strong style="color:#c084fc;" title="Lâmina Ghost Akamai Edge">' + (step.ghost_ip || decodeAkamaiGrnClient(step.akamai_grn)) + '</strong></span>') : '') +
                 '<span>⚡ Cache-Control: <strong style="color:#f8fafc;">' + (step.cache_control || '-') + '</strong></span>' +
                 '<span>📦 CDN Cache: <strong style="color:#34d399;">' + (step.cdn_status || '-') + '</strong></span>' +
                 '<span>🏷️ ETag: <span style="color:#cbd5e1;">' + (step.etag || '-') + '</span></span>' +
@@ -3261,6 +3320,8 @@ function generateHtmlReport(embeddedData = null) {
         const caseGrn = r.akamai_grn || (r.rawMeta && r.rawMeta.headers && (r.rawMeta.headers['akamai-grn'] || r.rawMeta.headers['x-akamai-grn'])) || null;
         const caseGrnBadge = caseGrn ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:2px 8px; border-radius:4px;" title="Akamai Global Request Number (GRN)">🆔 GRN: ' + escapeHtml(caseGrn) + '</span> ') : '';
 
+        const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
+        const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
         const prevVerInfo = versionMap.get(prevVKey);
         const prevPal = prevVerInfo ? prevVerInfo.palette : null;
         const prevVerBadge = prevVerInfo ? ('<span style="background:' + prevPal.badgeBg + '; color:#fff; font-size:0.62rem; padding:1px 5px; border-radius:3px; font-weight:800; font-family:monospace; margin-right:4px;">' + prevVerInfo.label + '</span>') : '';
@@ -3381,13 +3442,16 @@ function generateHtmlReport(embeddedData = null) {
       // Auto-seleciona a ocorrência corrente ou o primeiro item da lista
       if (rows.length > 0) {
         const exists = selectedDossieRegressionId && rows.some(item => item.id === selectedDossieRegressionId);
-        const targetId = exists ? selectedDossieRegressionId : rows[0].id;
+            const targetId = exists ? selectedDossieRegressionId : rows[0].id;
         selectDossieRegression(targetId);
       }
     }
 
+    let selectedDossieTimelineStepIndex = null;
+
     function selectDossieRegression(id) {
       selectedDossieRegressionId = id;
+      selectedDossieTimelineStepIndex = null;
       const r = rawRegressionsList.find(item => item.id === id);
       if (!r) return;
 
@@ -3421,39 +3485,243 @@ function generateHtmlReport(embeddedData = null) {
         currentInspectBtn.style.color = '#ffffff';
       }
 
+      updateDossieTimelineStepHighlights(id, null);
+
       const badge = document.getElementById('dossieTechPanelSelectedBadge');
       if (badge) {
-        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | ' + escapeHtml(r.arquivo);
+        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | <span style="background:rgba(239,68,68,0.2); color:#fca5a5; padding:1px 6px; border-radius:3px; font-weight:bold;">🚨 CAUSADORA</span> ' + escapeHtml(r.arquivo);
       }
 
-      renderDossieTechDetails(r);
+      renderDossieTechDetails(r, r, null);
     }
 
-    function renderDossieTechDetails(r) {
-      const panelContent = document.getElementById('dossieTechPanelContent');
-      if (!panelContent) return;
+    function selectDossieTimelineStep(regId, stepIndex) {
+      selectedDossieRegressionId = regId;
+      selectedDossieTimelineStepIndex = stepIndex;
 
-      const rawHeaders = (r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers || {};
-      const rawReqHeaders = (r.rawMeta && r.rawMeta.request_headers) || r.request_headers || {};
-      const serverIp = rawHeaders['x-server-ip'] || (r.rawMeta && r.rawMeta.serverIp) || r.server_ip || '-';
-      const cdnCache = rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
-      const cacheControl = rawHeaders['cache-control'] || '-';
-      const expires = rawHeaders['expires'] || '-';
-      const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
-      const etag = rawHeaders['etag'] || '-';
+      const r = rawRegressionsList.find(item => item.id === regId);
+      if (!r || !r.timeline || !r.timeline[stepIndex]) return;
+
+      const step = r.timeline[stepIndex];
+      const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+
+      const allCards = document.querySelectorAll('#dossieRegsListContainer .regression-card');
+      allCards.forEach(function(card) {
+        card.style.borderColor = 'rgba(239,68,68,0.35)';
+        card.style.background = isLight ? '#ffffff' : '#0f172a';
+        card.style.boxShadow = isLight ? '0 2px 8px rgba(0,0,0,0.06)' : '0 4px 12px rgba(0,0,0,0.25)';
+      });
+      const selectedCard = document.getElementById('dossieCard_' + regId);
+      if (selectedCard) {
+        selectedCard.style.borderColor = '#0284c7';
+        selectedCard.style.background = isLight ? '#f0f9ff' : '#132338';
+        selectedCard.style.boxShadow = isLight ? '0 0 16px rgba(2,132,199,0.25)' : '0 0 16px rgba(56,189,248,0.25)';
+      }
+
+      const allInspectBtns = document.querySelectorAll('[id^="btnDossieInspect_"]');
+      allInspectBtns.forEach(function(btn) {
+        btn.textContent = '🌐 Inspecionar Painel 👉';
+        btn.style.background = '#1e293b';
+        btn.style.borderColor = '#38bdf8';
+        btn.style.color = '#38bdf8';
+      });
+      const currentInspectBtn = document.getElementById('btnDossieInspect_' + regId);
+      if (currentInspectBtn) {
+        currentInspectBtn.textContent = '🔍 PASSO ' + (stepIndex + 1);
+        currentInspectBtn.style.background = '#0369a1';
+        currentInspectBtn.style.borderColor = '#38bdf8';
+        currentInspectBtn.style.color = '#ffffff';
+      }
+
+      updateDossieTimelineStepHighlights(regId, stepIndex);
+
+      const isCausativeStep = Boolean(step.isRegressionPoint || step.id === r.id);
+      const badge = document.getElementById('dossieTechPanelSelectedBadge');
+      if (badge) {
+        const stepNum = stepIndex + 1;
+        const total = r.timeline.length;
+        const causativeBadge = isCausativeStep ? '<span style="background:rgba(239,68,68,0.25); color:#fca5a5; padding:1px 6px; border-radius:3px; font-weight:bold;">🚨 CAUSADORA</span> ' : '';
+        badge.innerHTML = '<span style="color:#38bdf8; font-weight:bold;">#' + r.id + '</span> | ' + causativeBadge + '<span style="color:#e2e8f0; font-weight:bold;">Passo ' + stepNum + '/' + total + ' (' + escapeHtml(step.servidor) + ')</span> | ' + escapeHtml(r.arquivo);
+      }
+
+      renderDossieTechDetails(step, r, stepIndex);
+    }
+
+    function updateDossieTimelineStepHighlights(regId, activeStepIndex) {
+      const r = rawRegressionsList.find(item => item.id === regId);
+      if (!r || !r.timeline) return;
+
+      for (let i = 0; i < r.timeline.length; i++) {
+        const stepEl = document.getElementById('dossieTimelineStep_' + regId + '_' + i);
+        const btnEl = document.getElementById('btnDossieStepInspect_' + regId + '_' + i);
+        const step = r.timeline[i];
+        const isReg = Boolean(step.isRegressionPoint || step.id === r.id);
+        const isOrigin = Boolean(
+          (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
+          (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
+          (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === step.servidor)
+        );
+
+        if (stepEl) {
+          if (activeStepIndex === i) {
+            stepEl.classList.add('active-step-row');
+            stepEl.style.border = '2px solid #38bdf8';
+            stepEl.style.boxShadow = '0 0 16px rgba(56,189,248,0.45)';
+            stepEl.style.background = isReg ? 'rgba(239,68,68,0.22)' : '#0e2338';
+          } else {
+            stepEl.classList.remove('active-step-row');
+            stepEl.style.border = isReg ? '1px solid #ef4444' : (isOrigin ? '1px solid rgba(168,85,247,0.3)' : '1px solid #1e293b');
+            stepEl.style.boxShadow = 'none';
+            stepEl.style.background = isReg ? 'rgba(239,68,68,0.14)' : (isOrigin ? 'rgba(168,85,247,0.08)' : 'rgba(15,23,42,0.6)');
+          }
+        }
+
+        if (btnEl) {
+          if (activeStepIndex === i) {
+            btnEl.textContent = '🔍 INSPECIONANDO PASSO';
+            btnEl.style.background = '#0284c7';
+            btnEl.style.borderColor = '#38bdf8';
+            btnEl.style.color = '#ffffff';
+          } else {
+            btnEl.textContent = '🔍 Inspecionar 👉';
+            btnEl.style.background = '#1e293b';
+            btnEl.style.borderColor = '#38bdf8';
+            btnEl.style.color = '#38bdf8';
+          }
+        }
+      }
+    }
+
+    function renderDossieTechDetails(item, parentReg, stepIndex) {
+      const panelContent = document.getElementById('dossieTechPanelContent');
+      if (!panelContent || !item) return;
+
+      const r = parentReg || item;
+      const isCausative = (stepIndex === null || stepIndex === undefined) || (item.id === r.id) || Boolean(item.isRegressionPoint);
+
+      let rawHeaders = item.response_headers || (item.rawMeta && (item.rawMeta.response_headers || item.rawMeta.headers)) || (isCausative ? ((r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers) : null) || {};
+      let rawReqHeaders = item.request_headers || (item.rawMeta && item.rawMeta.request_headers) || (isCausative ? ((r.rawMeta && r.rawMeta.request_headers) || r.request_headers) : null) || {};
+      if (typeof rawHeaders === 'string') {
+        try { rawHeaders = JSON.parse(rawHeaders); if (rawHeaders.response) rawHeaders = rawHeaders.response; } catch(e) { rawHeaders = {}; }
+      }
+      if (typeof rawReqHeaders === 'string') {
+        try { rawReqHeaders = JSON.parse(rawReqHeaders); if (rawReqHeaders.request) rawReqHeaders = rawReqHeaders.request; } catch(e) { rawReqHeaders = {}; }
+      }
+      if (Object.keys(rawHeaders).length === 0 && item.headers_json) {
+        try {
+          const parsed = JSON.parse(item.headers_json);
+          rawHeaders = parsed.response ? parsed.response : parsed;
+        } catch(e) {}
+      }
+      if (Object.keys(rawReqHeaders).length === 0 && item.request_headers_json) {
+        try { rawReqHeaders = JSON.parse(item.request_headers_json); } catch(e) {}
+      }
+      if (Object.keys(rawReqHeaders).length === 0) {
+        rawReqHeaders = {
+          'cache-control': 'no-cache, no-store, must-revalidate',
+          'pragma': 'no-cache',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+          'accept': 'application/json, text/plain, */*'
+        };
+      }
+
+      const caseGrn = item.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || (isCausative ? r.akamai_grn : null) || null;
+      let ghostIp = item.ghost_ip || null;
+      if (!ghostIp && caseGrn && caseGrn !== '-') {
+        ghostIp = decodeAkamaiGrnClient(caseGrn);
+      }
+      const serverIp = (item.server_ip && item.server_ip !== '-') ? item.server_ip : (rawHeaders['x-server-ip'] || (isCausative && r.server_ip && r.server_ip !== '-' ? r.server_ip : null) || '-');
+      const cdnCache = item.cdn_status || rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
+      const cacheControl = item.cache_control || rawHeaders['cache-control'] || '-';
+      const expires = item.expires || rawHeaders['expires'] || '-';
+      const age = (item.age !== undefined && item.age !== '-') ? item.age : (rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-');
+      const etag = item.etag || rawHeaders['etag'] || '-';
       const lastModified = rawHeaders['last-modified'] || '-';
       const dateHttp = rawHeaders['date'] || '-';
-      const isOriginReg = Boolean(
-        (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
-        (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
-        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
+      const isOrigin = Boolean(
+        (item.papel_servidor && (item.papel_servidor.includes('ORIGEM') || item.papel_servidor.includes('FONTE'))) ||
+        (item.servidor && (item.servidor.includes('HMG') || item.servidor === 'HMG')) ||
+        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === item.servidor)
       );
-      const webServer = rawHeaders['server'] || (isOriginReg ? 'Apache Origin' : 'Akamai CDN');
-      const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
+      const webServer = rawHeaders['server'] || (isOrigin ? 'Apache Origin' : 'Akamai CDN');
+      const originUrl = (item.rawMeta && item.rawMeta.url_origem) || ((item.arquivo || r.arquivo) ? (window.location.origin + '/' + (item.arquivo || r.arquivo)) : '-');
       const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
       const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
-      const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
-      const rawPath = r.evidencia_raw_path ? r.evidencia_raw_path : '(salvo no buffer SQLite)';
+      const rawPath = item.evidencia_raw_path || (isCausative && r.evidencia_raw_path) || '(salvo no buffer SQLite)';
+
+      // Identificação e vínculo visual da versão
+      const versionMap = buildVersionMapForRegression(r);
+      let verInfo = null;
+      if (item.dg || item.hg || item.idg) {
+        const vKey = getVersionKey(item.dg, item.hg, item.idg);
+        verInfo = versionMap.get(vKey);
+      } else if (r.dg_recebido || r.hg_recebido || r.idg_recebido) {
+        const vKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
+        verInfo = versionMap.get(vKey);
+      }
+      const pal = verInfo ? verInfo.palette : { bg: 'rgba(255,255,255,0.05)', border: '#475569', text: '#cbd5e1', badgeBg: '#475569' };
+      const verBadge = verInfo ? ('<span style="background:' + pal.badgeBg + '; color:#fff; font-size:0.68rem; padding:2px 7px; border-radius:3px; font-weight:800; font-family:monospace;">' + verInfo.label + '</span>') : '';
+      const itemDgHg = (item.dg || r.dg_recebido || '-') + ' ' + (item.hg || r.hg_recebido || '-');
+      const itemIdg = item.idg || (isCausative ? r.idg_recebido : null);
+      const itemSt = (item.secoes !== null && item.secoes !== undefined) ? (item.secoes + ' seç') : (isCausative && r.secoes_recebido !== null && r.secoes_recebido !== undefined ? (r.secoes_recebido + ' seç') : null);
+      const itemTot = (item.dt && item.ht) ? (item.dt + ' ' + item.ht) : (isCausative && r.dt_recebido && r.ht_recebido ? (r.dt_recebido + ' ' + r.ht_recebido) : null);
+
+      let headerBannerHtml = '';
+      if (isCausative) {
+        headerBannerHtml = 
+          '<div style="background:rgba(239,68,68,0.15); border:1px solid #ef4444; border-radius:8px; padding:12px 14px; margin-bottom:12px; box-shadow:0 0 14px rgba(239,68,68,0.25);">' +
+            '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">' +
+              '<span style="font-weight:800; color:#fca5a5; font-size:0.88rem; display:flex; align-items:center; gap:6px;">' +
+                '<span style="background:#dc2626; color:#fff; padding:2px 7px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite;">🚨 REQUISIÇÃO CAUSADORA DO CASO</span>' +
+                '<span>Caso Forense #' + r.id + '</span>' +
+              '</span>' +
+              '<span style="font-size:0.75rem; color:#f8fafc; font-family:monospace; background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px;">' + escapeHtml(item.servidor || r.servidor || '') + ' (' + escapeHtml(item.papel_servidor || r.papel_servidor || (isOrigin ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+            '</div>' +
+            '<div style="font-size:0.74rem; color:#fca5a5; margin-bottom:6px; line-height:1.4;">' +
+              '<strong>Aviso Pericial:</strong> Esta foi a requisição exata que disparou a regressão detectada no monitoramento forense.' +
+            '</div>' +
+            '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
+          '</div>';
+      } else {
+        const stepNum = (stepIndex !== null && stepIndex !== undefined) ? (stepIndex + 1) : '?';
+        const totalSteps = (r.timeline && r.timeline.length) ? r.timeline.length : '?';
+        const callTimeDisp = (item.call_time_iso ? item.call_time_iso.slice(11, 19) : (item.timestamp_iso ? item.timestamp_iso.slice(11, 19) : '-'));
+        headerBannerHtml = 
+          '<div style="background:#0e2338; border:1px solid #38bdf8; border-radius:8px; padding:12px 14px; margin-bottom:12px; box-shadow:0 0 14px rgba(56,189,248,0.25);">' +
+            '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">' +
+              '<span style="font-weight:800; color:#38bdf8; font-size:0.88rem; display:flex; align-items:center; gap:6px;">' +
+                '<span style="background:#0284c7; color:#fff; padding:2px 7px; border-radius:4px; font-size:0.72rem;">⏱️ PASSO ' + stepNum + ' DE ' + totalSteps + '</span>' +
+                '<span>Linha do Tempo (Caso #' + r.id + ')</span>' +
+              '</span>' +
+              '<button type="button" onclick="selectDossieRegression(' + r.id + ');" class="btn-copy" style="font-size:0.70rem; padding:3px 10px; background:#dc2626; color:#fff; border:1px solid #ef4444; border-radius:4px; font-weight:700; cursor:pointer;" title="Voltar a inspecionar a requisição que causou a regressão">🚨 Voltar à Requisição Causadora</button>' +
+            '</div>' +
+            '<div style="font-size:0.74rem; color:#94a3b8; margin-bottom:6px;">' +
+              'Inspecionando leitura cronológica disparada às <strong style="color:#e2e8f0; font-family:monospace;">' + callTimeDisp + '</strong> no servidor <strong style="color:#38bdf8;">' + escapeHtml(item.servidor || '-') + '</strong>.' +
+            '</div>' +
+            '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(item.arquivo || r.arquivo) + '</div>' +
+          '</div>';
+      }
+
+      const versionCardHtml = 
+        '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; background:' + pal.bg + '; border:1px solid ' + pal.border + '; border-radius:8px; padding:8px 12px; margin-bottom:14px;">' +
+          '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+            '<span style="font-size:0.74rem; text-transform:uppercase; color:' + pal.text + '; font-weight:800; display:flex; align-items:center; gap:4px;">' +
+              '<span>🏷️</span> Versão Registrada nesta Requisição:' +
+            '</span>' +
+            verBadge +
+            '<span style="font-family:monospace; font-weight:700; font-size:0.78rem; color:' + pal.text + ';">' +
+              'DG/HG: ' + escapeHtml(itemDgHg) +
+            '</span>' +
+            (itemIdg ? ('<span style="font-family:monospace; font-size:0.74rem; color:' + pal.text + '; background:rgba(0,0,0,0.25); padding:1px 6px; border-radius:3px;">IDG: ' + escapeHtml(itemIdg) + '</span>') : '') +
+            (itemSt ? ('<span style="font-family:monospace; font-size:0.74rem; color:#34d399;">ST: ' + itemSt + '</span>') : '') +
+            (itemTot ? ('<span style="font-family:monospace; font-size:0.74rem; color:#fbbf24;">Tot: ' + itemTot + '</span>') : '') +
+          '</div>' +
+          (isCausative ? ('<div style="font-size:0.72rem; font-family:monospace; color:#fca5a5; display:flex; align-items:center; gap:6px;">' +
+            '<span>Transição:</span>' +
+            '<span style="opacity:0.8;">Anterior ➔</span>' +
+            '<span style="background:#dc2626; color:#fff; padding:1px 5px; border-radius:3px; font-weight:bold;">Retrocesso</span>' +
+          '</div>') : '') +
+        '</div>';
 
       let reqHeadersRowsHtml = '';
       const reqEntries = Object.entries(rawReqHeaders);
@@ -3520,14 +3788,10 @@ function generateHtmlReport(embeddedData = null) {
       }
 
       panelContent.innerHTML = 
-        '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
-          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
-            '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
-            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (isOriginReg ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
-          '</div>' +
-          '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
-        '</div>' +
+        headerBannerHtml +
+        versionCardHtml +
 
+        // 1. METADADOS DE REDE E CONEXÃO
         '<div style="margin-bottom:14px;">' +
           '<div style="font-size:0.72rem; text-transform:uppercase; color:#94a3b8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
             '<span>📍</span> Metadados de Rede e Conexão:' +
@@ -3535,8 +3799,12 @@ function generateHtmlReport(embeddedData = null) {
           '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid #334155;">' +
             '<tbody>' +
               '<tr style="border-bottom:1px solid #334155;">' +
-                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Instância / IP Borda (x-server-ip)</td>' +
-                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + serverIp + '</td>' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">VIP TCP (Cluster Conectado)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + (serverIp !== '-' ? '🌐 ' + escapeHtml(serverIp) : '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Lâmina Ghost (Akamai Edge)</td>' +
+                '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 8px;">' + (ghostIp ? ('⚡ ' + escapeHtml(ghostIp) + ' <span style="font-size:0.68rem; color:#a855f7; font-weight:normal;">(Decodificado do GRN)</span>') : '<span style="color:#64748b;">-</span>') + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Akamai-GRN</td>' +
@@ -3544,18 +3812,17 @@ function generateHtmlReport(embeddedData = null) {
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Instante de Disparo (T_call)</td>' +
-                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (r.call_time_iso || r.timestamp_iso) + '</td>' +
+                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (item.call_time_iso || item.timestamp_iso || r.call_time_iso || r.timestamp_iso) + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Latência de Rede (RTT)</td>' +
-                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-') + '</td>' +
+                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + ((item.latency_ms !== null && item.latency_ms !== undefined) ? (item.latency_ms + ' ms') : (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-')) + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Camada Web (Server)</td>' +
                 '<td style="color:#94a3b8; font-family:monospace; padding:5px 8px;">' + webServer + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
-                '<td style="color:#94a3b8; padding:5px 8px;">URL da Requisição</td>' +
                 '<td style="color:#38bdf8; font-family:monospace; padding:5px 8px; word-break:break-all;">' + (originUrl !== '-' ? ('<a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a>') : '-') + '</td>' +
               '</tr>' +
               '<tr>' +
@@ -3566,6 +3833,7 @@ function generateHtmlReport(embeddedData = null) {
           '</table>' +
         '</div>' +
 
+        // 2. DIRETIVAS DE CONTROLE DE CACHE & CDN
         '<div style="margin-bottom:14px;">' +
           '<div style="font-size:0.72rem; text-transform:uppercase; color:#34d399; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
             '<span>⚡</span> Diretivas e Headers de Controle de Cache (RFC 7234 & Akamai CDN):' +
@@ -3616,6 +3884,7 @@ function generateHtmlReport(embeddedData = null) {
           '</table>' +
         '</div>' +
 
+        // 3. CABEÇALHOS DA SOLICITAÇÃO (REQUEST HEADERS)
         '<div style="margin-bottom:14px;">' +
           '<div style="font-size:0.72rem; text-transform:uppercase; color:#38bdf8; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:4px;">' +
             '<span>📤</span> Cabeçalhos da Solicitação Enviada (HTTP Request Headers):' +
@@ -4077,6 +4346,8 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
           response_headers: responseHeaders,
           request_headers: requestHeaders,
           cache_control_headers: cacheControlSummary,
+          server_ip: meta.serverIp || (responseHeaders && responseHeaders['x-server-ip']) || (serverKey === 'HMG' ? '192.168.218.33' : null),
+          ghost_ip: meta.ghostIp || ((meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn']))) ? decodeAkamaiGrn(meta.akamaiGrn || responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])?.ghostIp : null),
           akamai_grn: meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
           isRegression,
           criterion,
@@ -4088,6 +4359,10 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       rawFilePath = null;
     }
   }
+
+  const effectiveGrn = meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null;
+  const ghostIp = meta.ghostIp || (effectiveGrn ? decodeAkamaiGrn(effectiveGrn)?.ghostIp : null) || null;
+  const serverIp = meta.serverIp || (responseHeaders && responseHeaders['x-server-ip']) || (serverKey === 'HMG' ? '192.168.218.33' : null);
 
   // 1. Grava na tabela leituras
   try {
@@ -4112,15 +4387,16 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       meta.ht || null,
       meta.totTime || null,
       JSON.stringify(responseHeaders || {}),
-      meta.serverIp || null,
+      serverIp,
       meta.cacheControl || null,
       meta.cdnCacheStatus || null,
       meta.maxAge !== null && meta.maxAge !== undefined ? Number(meta.maxAge) : null,
-      meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
+      effectiveGrn,
       callTimeIso,
       callTimeUnix,
       latencyMs,
-      JSON.stringify(requestHeaders || {})
+      JSON.stringify(requestHeaders || {}),
+      ghostIp
     );
   } catch (e) {
     console.error('Erro ao gravar leitura no SQLite:', e.message);
@@ -4150,12 +4426,14 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
         meta.prevHt || null,
         meta.dt || null,
         meta.ht || null,
-        meta.akamaiGrn || (responseHeaders && (responseHeaders['akamai-grn'] || responseHeaders['x-akamai-grn'])) || null,
+        effectiveGrn,
         callTimeIso,
         callTimeUnix,
         latencyMs,
         JSON.stringify(responseHeaders || {}),
-        JSON.stringify(requestHeaders || {})
+        JSON.stringify(requestHeaders || {}),
+        serverIp,
+        ghostIp
       );
 
       const regLine = [
@@ -4179,7 +4457,7 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
 
       const alertMsg = `\n======================================================================\n` +
         `[${timestampIso}] REGRESSÃO DETECTADA (${criterion}) NO SERVIDOR: ${serverKey} (${role})!\n` +
-        `  Instância / IP: ${meta.serverIp || 'N/A'}\n` +
+        `  Instância / VIP TCP: ${serverIp || 'N/A'}${ghostIp ? ' | Lâmina Ghost Akamai: ' + ghostIp : ''}\n` +
         `  Arquivo: ${relPath}\n` +
         `  Motivo: ${meta.details}\n` +
         `  Versão Anterior: dg=${meta.prevDg} hg=${meta.prevHg} | dt=${meta.prevDt || '-'} ht=${meta.prevHt || '-'} | st=${meta.prevSt ?? '-'} (idg: ${meta.prevIdg})\n` +
@@ -4249,6 +4527,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   const serverHeader = headers['server'] || (serverKey === 'SIM' ? 'Akamai CDN' : 'Apache Origin');
   const serverIp = headers['x-server-ip'] || timing.serverIp || null;
   const akamaiGrn = headers['akamai-grn'] || headers['x-akamai-grn'] || headers['x-akamai-request-id'] || headers['akamai-request-id'] || null;
+  const ghostIp = decodeAkamaiGrn(akamaiGrn)?.ghostIp || null;
   const requestHeaders = timing.requestHeaders || {
     'cache-control': 'no-cache, no-store, must-revalidate',
     'pragma': 'no-cache',
@@ -4265,6 +4544,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     lastModifiedHeader,
     serverHeader,
     serverIp,
+    ghostIp,
     akamaiGrn,
     requestHeaders,
     timestampIso: callTimeIso,
@@ -4348,6 +4628,7 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     prev.lastModifiedHeader = currentMeta.lastModifiedHeader;
     prev.serverHeader = currentMeta.serverHeader;
     if (currentMeta.serverIp) prev.serverIp = currentMeta.serverIp;
+    if (currentMeta.ghostIp) prev.ghostIp = currentMeta.ghostIp;
     if (currentMeta.akamaiGrn) prev.akamaiGrn = currentMeta.akamaiGrn;
     prev.callTimeUnix = currentMeta.callTimeUnix;
     prev.callTimeIso = currentMeta.callTimeIso;
@@ -6303,7 +6584,8 @@ function setElText(id, val) {
               <div style="display:flex; align-items:center; gap:6px;">
                 <span class="tag-pill tag-eleicao" style="font-size:0.68rem; padding:1px 5px;">\${row.comparison.primaryReplicaKey || 'RÉPLICA'}</span>
                 <span style="font-family:monospace; font-weight:700; color:#38bdf8;" title="Cache-Control e TTL">\${row.sim?.cacheControl || (row.sim?.maxAge != null ? 'max-age=' + row.sim.maxAge : '-')}</span>
-                \${row.sim?.serverIp ? ('<span class="tag-ip" title="Instância: ' + row.sim.serverIp + '">📍 ' + row.sim.serverIp + '</span>') : ''}
+                \${row.sim?.serverIp ? ('<span class="tag-ip" title="VIP TCP de Conexão: ' + row.sim.serverIp + '">🌐 ' + row.sim.serverIp + '</span>') : ''}
+                \${row.sim?.ghostIp ? ('<span class="tag-pill" style="background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); font-size:0.68rem; padding:1px 5px; font-family:monospace;" title="Lâmina Ghost Akamai Edge (Decodificado do GRN)">⚡ ' + row.sim.ghostIp + '</span>') : ''}
               </div>
               <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
                 <button onclick="openMultiNodeModal('\${encodeURIComponent(row.relPath)}')" class="btn-copy" style="font-size:0.68rem; padding:1px 6px;" title="Comparar todos os nós e headers">🔍 Matriz Completa</button>
@@ -7192,6 +7474,9 @@ function setElText(id, val) {
       document.getElementById('mSimEtag').innerText = sim.etag || '-';
       document.getElementById('mSimLm').innerText = sim.lastModifiedHeader || '-';
       document.getElementById('mSimIp').innerText = sim.serverIp || 'Aguardando coleta...';
+      if (document.getElementById('mSimGhostIp')) {
+        document.getElementById('mSimGhostIp').innerText = sim.ghostIp ? ('⚡ ' + sim.ghostIp) : '-';
+      }
       document.getElementById('mSimServer').innerText = sim.serverHeader || 'Akamai CDN';
       if (document.getElementById('mSimGrn')) {
         document.getElementById('mSimGrn').innerText = sim.akamaiGrn || '-';
@@ -7205,8 +7490,8 @@ function setElText(id, val) {
       if (sim.maxAge !== null) {
         analysis += '⏱️ <strong>TTL de Borda (Edge):</strong> O SIM reporta <code>max-age=' + sim.maxAge + 's</code>, significando que a réplica da CDN expira em ' + sim.maxAge + ' segundos antes de revalidar com a origem HMG.<br>';
       }
-      if (sim.serverIp) {
-        analysis += '📍 <strong>Diagnóstico de Instância Borda:</strong> Esta resposta foi servida pelo nó/PoP Akamai <code>' + sim.serverIp + '</code>. Se outra requisição for atendida por um PoP diferente que ainda retém versão anterior em cache, ocorrerá uma regressão percebida pelo usuário.<br>';
+      if (sim.serverIp || sim.ghostIp) {
+        analysis += '📍 <strong>Diagnóstico de Instância Borda:</strong> Atendido pelo VIP TCP de conexão <code>' + (sim.serverIp || '-') + '</code> e Lâmina Ghost Akamai <code>' + (sim.ghostIp || '-') + '</code> (decodificado do GRN).<br>';
       }
       if (hmg.etag && sim.etag && hmg.etag !== sim.etag) {
         analysis += '🏷️ <strong>ETags Distintos:</strong> HMG utiliza ETag de Apache (<code>' + hmg.etag + '</code>) enquanto SIM utiliza ETag de CDN/S3 (<code>' + sim.etag + '</code>). A revalidação condicional pode agir de forma independente.';
@@ -7255,6 +7540,67 @@ function setElText(id, val) {
       const i = (idg || '').trim();
       if (!d && !h && !i) return '';
       return (d + ' ' + h).trim() + (i ? ('#' + i) : '');
+    }
+
+    function buildVersionMapForRegression(r) {
+      if (!r) return new Map();
+      const timelineList = r.timeline || [];
+      const versionMap = new Map();
+      let verCounter = 1;
+
+      for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
+        const step = timelineList[tIdx];
+        const vKey = getVersionKey(step.dg, step.hg, step.idg);
+        if (vKey && !versionMap.has(vKey)) {
+          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+          versionMap.set(vKey, {
+            index: verCounter,
+            label: 'V' + verCounter,
+            palette: VERSION_PALETTES[paletteIndex],
+            dg: step.dg || '',
+            hg: step.hg || '',
+            idg: step.idg || '',
+            count: 0
+          });
+          verCounter++;
+        }
+        if (vKey && versionMap.has(vKey)) {
+          versionMap.get(vKey).count++;
+        }
+      }
+
+      const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
+      const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
+
+      if (prevVKey && !versionMap.has(prevVKey)) {
+        const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+        versionMap.set(prevVKey, {
+          index: verCounter,
+          label: 'V' + verCounter,
+          palette: VERSION_PALETTES[paletteIndex],
+          dg: r.dg_anterior || '',
+          hg: r.hg_anterior || '',
+          idg: r.idg_anterior || '',
+          count: 0
+        });
+        verCounter++;
+      }
+
+      if (currVKey && !versionMap.has(currVKey)) {
+        const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
+        versionMap.set(currVKey, {
+          index: verCounter,
+          label: 'V' + verCounter,
+          palette: VERSION_PALETTES[paletteIndex],
+          dg: r.dg_recebido || '',
+          hg: r.hg_recebido || '',
+          idg: r.idg_recebido || '',
+          count: 0
+        });
+        verCounter++;
+      }
+
+      return versionMap;
     }
 
     const expandedRegCardIds = new Set();
@@ -7392,6 +7738,19 @@ function setElText(id, val) {
       }
     }
 
+    function decodeAkamaiGrnClient(grn) {
+      if (!grn || typeof grn !== 'string') return null;
+      const parts = grn.trim().split('.');
+      if (parts.length < 4) return null;
+      const hex = parts[1];
+      if (hex.length !== 8) return null;
+      const octets = [];
+      for (let i = 6; i >= 0; i -= 2) {
+        octets.push(parseInt(hex.substr(i, 2), 16));
+      }
+      return octets.join('.');
+    }
+
     function renderFilteredRegressoes(resetPage) {
       if (resetPage) regModalPageSize = 50;
       const container = document.getElementById('regressoesListContainer');
@@ -7440,10 +7799,14 @@ function setElText(id, val) {
           const matchServer = (r.servidor || '').toLowerCase().includes(cleanSearch);
           const matchUf = (r.fileMeta && r.fileMeta.uf ? r.fileMeta.uf : '').toLowerCase().includes(cleanSearch);
           const matchCargo = (r.fileMeta && r.fileMeta.cargo ? r.fileMeta.cargo : '').toLowerCase().includes(cleanSearch);
-          const matchIp = (r.rawMeta && r.rawMeta.headers && r.rawMeta.headers['x-server-ip'] ? r.rawMeta.headers['x-server-ip'] : (r.rawMeta && r.rawMeta.serverIp ? r.rawMeta.serverIp : '')).toLowerCase().includes(cleanSearch);
+          const matchIp = (r.server_ip || '').toLowerCase().includes(cleanSearch) || 
+                          (r.ghost_ip || '').toLowerCase().includes(cleanSearch) ||
+                          (r.rawMeta && r.rawMeta.headers && r.rawMeta.headers['x-server-ip'] ? r.rawMeta.headers['x-server-ip'] : (r.rawMeta && r.rawMeta.serverIp ? r.rawMeta.serverIp : '')).toLowerCase().includes(cleanSearch);
           const matchGrn = (r.akamai_grn || '').toLowerCase().includes(cleanSearch) || (r.rawMeta && r.rawMeta.headers && String(r.rawMeta.headers['akamai-grn'] || '').toLowerCase().includes(cleanSearch));
           const matchTimelineGrn = (r.timeline || []).some(function(step) {
-            return step.akamai_grn && String(step.akamai_grn).toLowerCase().includes(cleanSearch);
+            return (step.akamai_grn && String(step.akamai_grn).toLowerCase().includes(cleanSearch)) ||
+                   (step.server_ip && String(step.server_ip).toLowerCase().includes(cleanSearch)) ||
+                   (step.ghost_ip && String(step.ghost_ip).toLowerCase().includes(cleanSearch));
           });
           if (!matchId && !matchIdg && !matchFile && !matchMotivo && !matchServer && !matchUf && !matchCargo && !matchIp && !matchGrn && !matchTimelineGrn) return false;
         }
@@ -7533,60 +7896,7 @@ function setElText(id, val) {
         const timelineList = r.timeline || [];
 
         // Mapeamento e identificação de versões distintas para a trilha visual
-        const versionMap = new Map();
-        let verCounter = 1;
-
-        for (let tIdx = 0; tIdx < timelineList.length; tIdx++) {
-          const step = timelineList[tIdx];
-          const vKey = getVersionKey(step.dg, step.hg, step.idg);
-          if (vKey && !versionMap.has(vKey)) {
-            const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-            versionMap.set(vKey, {
-              index: verCounter,
-              label: 'V' + verCounter,
-              palette: VERSION_PALETTES[paletteIndex],
-              dg: step.dg || '',
-              hg: step.hg || '',
-              idg: step.idg || '',
-              count: 0
-            });
-            verCounter++;
-          }
-          if (vKey && versionMap.has(vKey)) {
-            versionMap.get(vKey).count++;
-          }
-        }
-
-        const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
-        const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
-
-        if (prevVKey && !versionMap.has(prevVKey)) {
-          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-          versionMap.set(prevVKey, {
-            index: verCounter,
-            label: 'V' + verCounter,
-            palette: VERSION_PALETTES[paletteIndex],
-            dg: r.dg_anterior || '',
-            hg: r.hg_anterior || '',
-            idg: r.idg_anterior || '',
-            count: 0
-          });
-          verCounter++;
-        }
-
-        if (currVKey && !versionMap.has(currVKey)) {
-          const paletteIndex = (verCounter - 1) % VERSION_PALETTES.length;
-          versionMap.set(currVKey, {
-            index: verCounter,
-            label: 'V' + verCounter,
-            palette: VERSION_PALETTES[paletteIndex],
-            dg: r.dg_recebido || '',
-            hg: r.hg_recebido || '',
-            idg: r.idg_recebido || '',
-            count: 0
-          });
-          verCounter++;
-        }
+        const versionMap = buildVersionMapForRegression(r);
 
         let timelineHtml = '';
         if (timelineList.length > 0) {
@@ -7627,7 +7937,7 @@ function setElText(id, val) {
             const latencyBadge = (step.latency_ms !== null && step.latency_ms !== undefined) 
               ? ('<span style="color:#94a3b8; font-size:0.68rem; font-family:monospace;" title="Latência de ida e volta da requisição: ' + step.latency_ms + 'ms">(' + step.latency_ms + 'ms)</span>')
               : '';
-            const isReg = step.isRegressionPoint;
+            const isReg = Boolean(step.isRegressionPoint || step.id === r.id);
             const isOrigin = Boolean(
               (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
               (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
@@ -7640,7 +7950,7 @@ function setElText(id, val) {
             
             const badgeServidor = isOrigin ? 'tag-hmg-title' : 'tag-sim-title';
             const statusLabel = isReg 
-              ? '<span style="background:#dc2626; color:#fff; font-weight:700; padding:2px 8px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite;">🚨 DETECÇÃO DE REVERSÃO!</span>'
+              ? '<span style="background:#dc2626; color:#fff; font-weight:800; padding:2px 8px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite; box-shadow:0 0 10px rgba(220,38,38,0.5);">🚨 REQUISIÇÃO CAUSADORA DO CASO FORENSE</span>'
               : (isOrigin ? '<span style="color:#c084fc; font-weight:600; font-size:0.72rem;">🟣 Origem Primária</span>' : '<span style="color:#10b981; font-weight:600; font-size:0.72rem;">✓ Leitura Normal</span>');
 
             const stepDgHg = (step.dg || '-') + ' ' + (step.hg || '-');
@@ -7663,7 +7973,7 @@ function setElText(id, val) {
               escapeHtml(stepIdg) +
             '</span>') : '';
 
-            timelineHtml += '<div style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem;">' +
+            timelineHtml += '<div id="timelineStep_' + r.id + '_' + tIdx + '" class="timeline-step-row" data-reg-id="' + r.id + '" data-step-index="' + tIdx + '" onclick="event.stopPropagation(); selectTimelineStepForDetails(' + r.id + ', ' + tIdx + ');" style="' + itemBg + ' border-radius:6px; padding:8px 12px; font-size:0.78rem; cursor:pointer; transition:all 0.15s ease;">' +
               '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:4px;">' +
                 '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
                   '<strong style="font-family:monospace; color:#f8fafc; font-size:0.82rem;" title="Instante de envio da requisição (Disparo)">• ' + stepTime + '</strong>' +
@@ -7674,12 +7984,16 @@ function setElText(id, val) {
                   (stepSt ? '<span style="font-family:monospace; color:#34d399; font-size:0.72rem;">' + stepSt + '</span>' : '') +
                   (stepTot ? '<span style="font-family:monospace; color:#fbbf24; font-size:0.72rem;">' + stepTot + '</span>' : '') +
                 '</div>' +
-                '<div>' + statusLabel + '</div>' +
+                '<div style="display:flex; align-items:center; gap:6px;">' +
+                  statusLabel +
+                  '<button type="button" id="btnStepInspect_' + r.id + '_' + tIdx + '" onclick="event.stopPropagation(); selectTimelineStepForDetails(' + r.id + ', ' + tIdx + ');" class="btn-copy" style="font-size:0.70rem; padding:2px 8px; background:#1e293b; border:1px solid #38bdf8; color:#38bdf8; border-radius:4px; cursor:pointer;" title="Inspecionar metadados e headers desta requisição">🔍 Inspecionar 👉</button>' +
+                '</div>' +
               '</div>' +
 
               '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:#94a3b8; font-family:monospace; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px; margin-top:4px;">' +
                 '<span>⏱️ Chamada: <strong style="color:#e2e8f0;">' + ((step.call_time_iso ? step.call_time_iso.slice(11, 19) : stepTime)) + '</strong></span>' +
-                '<span>🌐 IP Borda: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
+                '<span>🌐 VIP TCP: <strong style="color:#38bdf8;">' + (step.server_ip || '-') + '</strong></span>' +
+                ((step.ghost_ip || (step.akamai_grn ? decodeAkamaiGrnClient(step.akamai_grn) : null)) ? ('<span>⚡ Ghost: <strong style="color:#c084fc;" title="Lâmina Ghost Akamai Edge (Decodificado do GRN)">' + (step.ghost_ip || decodeAkamaiGrnClient(step.akamai_grn)) + '</strong></span>') : '') +
                 '<span>⚡ Cache-Control: <strong style="color:#f8fafc;">' + (step.cache_control || '-') + '</strong></span>' +
                 '<span>📦 CDN Cache: <strong style="color:#34d399;">' + (step.cdn_status || '-') + '</strong></span>' +
                 '<span>🏷️ ETag: <span style="color:#cbd5e1;">' + (step.etag || '-') + '</span></span>' +
@@ -7692,8 +8006,12 @@ function setElText(id, val) {
           timelineHtml += '</div></div>';
         }
 
-        const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+        const caseGrn = r.akamai_grn || (r.rawMeta && r.rawMeta.headers && (r.rawMeta.headers['akamai-grn'] || r.rawMeta.headers['x-akamai-grn'])) || (r.response_headers && (r.response_headers['akamai-grn'] || r.response_headers['x-akamai-grn'])) || null;
+        const caseGhostIp = r.ghost_ip || (caseGrn ? decodeAkamaiGrnClient(caseGrn) : null);
+        const caseServerIp = (r.server_ip && r.server_ip !== '-') ? r.server_ip : ((r.rawMeta && r.rawMeta.headers && r.rawMeta.headers['x-server-ip']) || (r.rawMeta && r.rawMeta.serverIp) || (r.response_headers && r.response_headers['x-server-ip']) || null);
         const caseGrnBadge = caseGrn ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.3); padding:2px 8px; border-radius:4px;" title="Akamai Global Request Number (GRN)">🆔 GRN: ' + escapeHtml(caseGrn) + '</span> ') : '';
+        const ghostBadge = caseGhostIp ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(168,85,247,0.15); color:#c084fc; border:1px solid rgba(168,85,247,0.35); padding:2px 7px; border-radius:4px;" title="Lâmina Ghost Akamai Edge (Decodificado do GRN)">⚡ Ghost: ' + escapeHtml(caseGhostIp) + '</span> ') : '';
+        const serverIpBadge = caseServerIp ? ('<span style="font-family:monospace; font-size:0.72rem; background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); padding:2px 7px; border-radius:4px;" title="VIP TCP de Conexão">🌐 VIP: ' + escapeHtml(caseServerIp) + '</span> ') : '';
 
         const isExpanded = expandedRegCardIds.has(r.id);
 
@@ -7707,6 +8025,8 @@ function setElText(id, val) {
               '<span style="font-family:monospace; font-weight:700; font-size:0.82rem; background:rgba(239,68,68,0.2); color:#fca5a5; padding:2px 8px; border-radius:4px; border:1px solid rgba(239,68,68,0.4);">#' + r.id + '</span>' +
               '<span style="font-size:0.80rem; color:#94a3b8; font-family:monospace;">⏱️ ' + timeStr + ' (' + elapsedText + ')</span>' +
               '<span class="' + serverBadgeClass + '" style="font-size:0.75rem; padding:2px 8px; border-radius:4px;">' + r.servidor + ' (' + serverRoleDesc + ')</span>' +
+              serverIpBadge +
+              ghostBadge +
               critBadgesHtml +
               caseGrnBadge +
             '</div>' +
@@ -7736,6 +8056,8 @@ function setElText(id, val) {
           '<div id="regCardBody_' + r.id + '" class="card-collapsible-body" style="display:' + (isExpanded ? 'block' : 'none') + '; margin-top:10px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:10px;">' +
             timelineHtml;
 
+        const prevVKey = getVersionKey(r.dg_anterior, r.hg_anterior, r.idg_anterior);
+        const currVKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
         const prevVerInfo = versionMap.get(prevVKey);
         const prevPal = prevVerInfo ? prevVerInfo.palette : null;
         const prevVerBadge = prevVerInfo ? ('<span style="background:' + prevPal.badgeBg + '; color:#fff; font-size:0.62rem; padding:1px 5px; border-radius:3px; font-weight:800; font-family:monospace; margin-right:4px;">' + prevVerInfo.label + '</span>') : '';
@@ -7834,9 +8156,11 @@ function setElText(id, val) {
     }
 
     let selectedRegressionId = null;
+    let selectedTimelineStepIndex = null;
 
     function selectRegressionForDetails(id) {
       selectedRegressionId = id;
+      selectedTimelineStepIndex = null;
       const r = allRegressoesData.find(function(item) { return item.id === id; });
       if (!r) return;
 
@@ -7855,7 +8179,7 @@ function setElText(id, val) {
         selectedCard.style.boxShadow = '0 0 16px rgba(56,189,248,0.25)';
       }
 
-      // Atualiza botões "Inspecionar"
+      // Atualiza botões "Inspecionar" do card
       const allInspectBtns = document.querySelectorAll('[id^="btnInspect_"]');
       allInspectBtns.forEach(function(btn) {
         btn.textContent = '🌐 Inspecionar Painel 👉';
@@ -7871,41 +8195,257 @@ function setElText(id, val) {
         currentInspectBtn.style.color = '#ffffff';
       }
 
+      // Limpa os destaques dos passos na timeline do card
+      updateTimelineStepHighlights(id, null);
+
       // Atualiza o badge do painel direito
       const badge = document.getElementById('techPanelSelectedBadge');
       if (badge) {
-        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | ' + escapeHtml(r.arquivo);
+        badge.innerHTML = '<span style="color:#fca5a5; font-weight:bold;">#' + r.id + '</span> | <span style="background:rgba(239,68,68,0.2); color:#fca5a5; padding:1px 6px; border-radius:3px; font-weight:bold;">🚨 CAUSADORA</span> ' + escapeHtml(r.arquivo);
       }
 
-      // Renderiza os detalhes técnicos no painel direito
-      renderTechDetailsInPanel(r);
+      // Renderiza os detalhes técnicos no painel direito apontando para a requisição causadora
+      renderTechDetailsInPanel(r, r, null);
     }
 
-    function renderTechDetailsInPanel(r) {
-      const panelContent = document.getElementById('techPanelContent');
-      if (!panelContent) return;
+    function selectTimelineStepForDetails(regId, stepIndex) {
+      selectedRegressionId = regId;
+      selectedTimelineStepIndex = stepIndex;
 
-      const rawHeaders = (r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers || {};
-      const rawReqHeaders = (r.rawMeta && r.rawMeta.request_headers) || r.request_headers || {};
-      const serverIp = rawHeaders['x-server-ip'] || (r.rawMeta && r.rawMeta.serverIp) || (r.server_ip) || '-';
-      const cdnCache = rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
-      const cacheControl = rawHeaders['cache-control'] || '-';
-      const expires = rawHeaders['expires'] || '-';
-      const age = rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-';
-      const etag = rawHeaders['etag'] || '-';
+      const r = allRegressoesData.find(function(item) { return item.id === regId; });
+      if (!r || !r.timeline || !r.timeline[stepIndex]) return;
+
+      const step = r.timeline[stepIndex];
+
+      // Destaca o card pai se não estiver
+      const allCards = document.querySelectorAll('.regression-card');
+      allCards.forEach(function(card) {
+        card.style.borderColor = 'rgba(239,68,68,0.35)';
+        card.style.background = '#0f172a';
+        card.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+      });
+      const selectedCard = document.getElementById('regCard_' + regId);
+      if (selectedCard) {
+        selectedCard.style.borderColor = '#38bdf8';
+        selectedCard.style.background = '#132338';
+        selectedCard.style.boxShadow = '0 0 16px rgba(56,189,248,0.25)';
+      }
+
+      // Atualiza botões "Inspecionar" do card
+      const allInspectBtns = document.querySelectorAll('[id^="btnInspect_"]');
+      allInspectBtns.forEach(function(btn) {
+        btn.textContent = '🌐 Inspecionar Painel 👉';
+        btn.style.background = '#1e293b';
+        btn.style.borderColor = '#38bdf8';
+        btn.style.color = '#38bdf8';
+      });
+      const currentInspectBtn = document.getElementById('btnInspect_' + regId);
+      if (currentInspectBtn) {
+        currentInspectBtn.textContent = '🔍 PASSO ' + (stepIndex + 1);
+        currentInspectBtn.style.background = '#0369a1';
+        currentInspectBtn.style.borderColor = '#38bdf8';
+        currentInspectBtn.style.color = '#ffffff';
+      }
+
+      // Atualiza destaques nos passos da linha do tempo
+      updateTimelineStepHighlights(regId, stepIndex);
+
+      // Atualiza o badge do cabeçalho do painel direito
+      const isCausativeStep = Boolean(step.isRegressionPoint || step.id === r.id);
+      const badge = document.getElementById('techPanelSelectedBadge');
+      if (badge) {
+        const stepNum = stepIndex + 1;
+        const total = r.timeline.length;
+        const causativeBadge = isCausativeStep ? '<span style="background:rgba(239,68,68,0.25); color:#fca5a5; padding:1px 6px; border-radius:3px; font-weight:bold;">🚨 CAUSADORA</span> ' : '';
+        badge.innerHTML = '<span style="color:#38bdf8; font-weight:bold;">#' + r.id + '</span> | ' + causativeBadge + '<span style="color:#e2e8f0; font-weight:bold;">Passo ' + stepNum + '/' + total + ' (' + escapeHtml(step.servidor) + ')</span> | ' + escapeHtml(r.arquivo);
+      }
+
+      // Renderiza os detalhes técnicos no painel direito para este passo específico
+      renderTechDetailsInPanel(step, r, stepIndex);
+    }
+
+    function updateTimelineStepHighlights(regId, activeStepIndex) {
+      const r = allRegressoesData.find(function(item) { return item.id === regId; });
+      if (!r || !r.timeline) return;
+
+      for (let i = 0; i < r.timeline.length; i++) {
+        const stepEl = document.getElementById('timelineStep_' + regId + '_' + i);
+        const btnEl = document.getElementById('btnStepInspect_' + regId + '_' + i);
+        const step = r.timeline[i];
+        const isReg = Boolean(step.isRegressionPoint || step.id === r.id);
+        const isOrigin = Boolean(
+          (step.papel_servidor && (step.papel_servidor.includes('ORIGEM') || step.papel_servidor.includes('FONTE'))) ||
+          (step.servidor && (step.servidor.includes('HMG') || step.servidor === 'HMG')) ||
+          (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === step.servidor)
+        );
+
+        if (stepEl) {
+          if (activeStepIndex === i) {
+            stepEl.classList.add('active-step-row');
+            stepEl.style.border = '2px solid #38bdf8';
+            stepEl.style.boxShadow = '0 0 16px rgba(56,189,248,0.45)';
+            stepEl.style.background = isReg ? 'rgba(239,68,68,0.22)' : '#0e2338';
+          } else {
+            stepEl.classList.remove('active-step-row');
+            stepEl.style.border = isReg ? '1px solid #ef4444' : (isOrigin ? '1px solid rgba(168,85,247,0.3)' : '1px solid #1e293b');
+            stepEl.style.boxShadow = 'none';
+            stepEl.style.background = isReg ? 'rgba(239,68,68,0.14)' : (isOrigin ? 'rgba(168,85,247,0.08)' : 'rgba(15,23,42,0.6)');
+          }
+        }
+
+        if (btnEl) {
+          if (activeStepIndex === i) {
+            btnEl.textContent = '🔍 INSPECIONANDO PASSO';
+            btnEl.style.background = '#0284c7';
+            btnEl.style.borderColor = '#38bdf8';
+            btnEl.style.color = '#ffffff';
+          } else {
+            btnEl.textContent = '🔍 Inspecionar 👉';
+            btnEl.style.background = '#1e293b';
+            btnEl.style.borderColor = '#38bdf8';
+            btnEl.style.color = '#38bdf8';
+          }
+        }
+      }
+    }
+
+    function renderTechDetailsInPanel(item, parentReg, stepIndex) {
+      const panelContent = document.getElementById('techPanelContent');
+      if (!panelContent || !item) return;
+
+      const r = parentReg || item;
+      const isCausative = (stepIndex === null || stepIndex === undefined) || (item.id === r.id) || Boolean(item.isRegressionPoint);
+
+      let rawHeaders = item.response_headers || (item.rawMeta && (item.rawMeta.response_headers || item.rawMeta.headers)) || (isCausative ? ((r.rawMeta && (r.rawMeta.response_headers || r.rawMeta.headers)) || r.response_headers) : null);
+      if (!rawHeaders && item.headers_json) {
+        try { rawHeaders = typeof item.headers_json === 'string' ? JSON.parse(item.headers_json) : item.headers_json; } catch(e) {}
+      }
+      if (typeof rawHeaders === 'string') {
+        try { rawHeaders = JSON.parse(rawHeaders); } catch(e) { rawHeaders = {}; }
+      }
+      if (rawHeaders && rawHeaders.response) {
+        rawHeaders = rawHeaders.response;
+      }
+      if (!rawHeaders || typeof rawHeaders !== 'object') rawHeaders = {};
+
+      let rawReqHeaders = item.request_headers || (item.rawMeta && item.rawMeta.request_headers) || (isCausative ? ((r.rawMeta && r.rawMeta.request_headers) || r.request_headers) : null);
+      if (!rawReqHeaders && item.request_headers_json) {
+        try { rawReqHeaders = typeof item.request_headers_json === 'string' ? JSON.parse(item.request_headers_json) : item.request_headers_json; } catch(e) {}
+      }
+      if (typeof rawReqHeaders === 'string') {
+        try { rawReqHeaders = JSON.parse(rawReqHeaders); } catch(e) { rawReqHeaders = {}; }
+      }
+      if (rawReqHeaders && rawReqHeaders.request) {
+        rawReqHeaders = rawReqHeaders.request;
+      }
+      if (!rawReqHeaders || typeof rawReqHeaders !== 'object') rawReqHeaders = {};
+
+      if (Object.keys(rawReqHeaders).length === 0) {
+        rawReqHeaders = {
+          'cache-control': 'no-cache, no-store, must-revalidate',
+          'pragma': 'no-cache',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0',
+          'accept': 'application/json, text/plain, */*'
+        };
+      }
+
+      const caseGrn = item.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || (isCausative ? r.akamai_grn : null) || null;
+      let ghostIp = item.ghost_ip || null;
+      if (!ghostIp && caseGrn && caseGrn !== '-') {
+        ghostIp = decodeAkamaiGrnClient(caseGrn);
+      }
+      const serverIp = (item.server_ip && item.server_ip !== '-') ? item.server_ip : (rawHeaders['x-server-ip'] || (isCausative && r.server_ip && r.server_ip !== '-' ? r.server_ip : null) || '-');
+      const cdnCache = item.cdn_status || rawHeaders['cdn-cache-status'] || rawHeaders['x-cache'] || '-';
+      const cacheControl = item.cache_control || rawHeaders['cache-control'] || '-';
+      const expires = item.expires || rawHeaders['expires'] || '-';
+      const age = (item.age !== undefined && item.age !== '-') ? item.age : (rawHeaders['age'] !== undefined ? (rawHeaders['age'] + 's') : '-');
+      const etag = item.etag || rawHeaders['etag'] || '-';
       const lastModified = rawHeaders['last-modified'] || '-';
       const dateHttp = rawHeaders['date'] || '-';
-      const isOriginReg = Boolean(
-        (r.papel_servidor && (r.papel_servidor.includes('ORIGEM') || r.papel_servidor.includes('FONTE'))) ||
-        (r.servidor && (r.servidor.includes('HMG') || r.servidor === 'HMG')) ||
-        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === r.servidor)
+      const isOrigin = Boolean(
+        (item.papel_servidor && (item.papel_servidor.includes('ORIGEM') || item.papel_servidor.includes('FONTE'))) ||
+        (item.servidor && (item.servidor.includes('HMG') || item.servidor === 'HMG')) ||
+        (typeof latestApiData !== 'undefined' && latestApiData && latestApiData.originKey === item.servidor)
       );
-      const webServer = rawHeaders['server'] || (isOriginReg ? 'Apache Origin' : 'Akamai CDN');
-      const originUrl = (r.rawMeta && r.rawMeta.url_origem) || '-';
+      const webServer = rawHeaders['server'] || (isOrigin ? 'Apache Origin' : 'Akamai CDN');
+      const originUrl = (item.rawMeta && item.rawMeta.url_origem) || ((item.arquivo || r.arquivo) ? (window.location.origin + '/' + (item.arquivo || r.arquivo)) : '-');
       const reqCacheControl = rawReqHeaders['cache-control'] || rawReqHeaders['Cache-Control'] || '-';
       const reqPragma = rawReqHeaders['pragma'] || rawReqHeaders['Pragma'] || '-';
-      const caseGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
-      const rawPath = r.evidencia_raw_path ? r.evidencia_raw_path : '(salvo no buffer SQLite)';
+      const rawPath = item.evidencia_raw_path || (isCausative && r.evidencia_raw_path) || '(salvo no buffer SQLite)';
+
+      // Identificação e vínculo visual da versão
+      const versionMap = buildVersionMapForRegression(r);
+      let verInfo = null;
+      if (item.dg || item.hg || item.idg) {
+        const vKey = getVersionKey(item.dg, item.hg, item.idg);
+        verInfo = versionMap.get(vKey);
+      } else if (r.dg_recebido || r.hg_recebido || r.idg_recebido) {
+        const vKey = getVersionKey(r.dg_recebido, r.hg_recebido, r.idg_recebido);
+        verInfo = versionMap.get(vKey);
+      }
+      const pal = verInfo ? verInfo.palette : { bg: 'rgba(255,255,255,0.05)', border: '#475569', text: '#cbd5e1', badgeBg: '#475569' };
+      const verBadge = verInfo ? ('<span style="background:' + pal.badgeBg + '; color:#fff; font-size:0.68rem; padding:2px 7px; border-radius:3px; font-weight:800; font-family:monospace;">' + verInfo.label + '</span>') : '';
+      const itemDgHg = (item.dg || r.dg_recebido || '-') + ' ' + (item.hg || r.hg_recebido || '-');
+      const itemIdg = item.idg || (isCausative ? r.idg_recebido : null);
+      const itemSt = (item.secoes !== null && item.secoes !== undefined) ? (item.secoes + ' seç') : (isCausative && r.secoes_recebido !== null && r.secoes_recebido !== undefined ? (r.secoes_recebido + ' seç') : null);
+      const itemTot = (item.dt && item.ht) ? (item.dt + ' ' + item.ht) : (isCausative && r.dt_recebido && r.ht_recebido ? (r.dt_recebido + ' ' + r.ht_recebido) : null);
+
+      let headerBannerHtml = '';
+      if (isCausative) {
+        headerBannerHtml = 
+          '<div style="background:rgba(239,68,68,0.15); border:1px solid #ef4444; border-radius:8px; padding:12px 14px; margin-bottom:12px; box-shadow:0 0 14px rgba(239,68,68,0.25);">' +
+            '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">' +
+              '<span style="font-weight:800; color:#fca5a5; font-size:0.88rem; display:flex; align-items:center; gap:6px;">' +
+                '<span style="background:#dc2626; color:#fff; padding:2px 7px; border-radius:4px; font-size:0.72rem; animation:pulse 1s infinite;">🚨 REQUISIÇÃO CAUSADORA DO CASO</span>' +
+                '<span>Caso Forense #' + r.id + '</span>' +
+              '</span>' +
+              '<span style="font-size:0.75rem; color:#f8fafc; font-family:monospace; background:rgba(0,0,0,0.3); padding:2px 8px; border-radius:4px;">' + escapeHtml(item.servidor || r.servidor || '') + ' (' + escapeHtml(item.papel_servidor || r.papel_servidor || (isOrigin ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
+            '</div>' +
+            '<div style="font-size:0.74rem; color:#fca5a5; margin-bottom:6px; line-height:1.4;">' +
+              '<strong>Aviso Pericial:</strong> Esta foi a requisição exata que disparou a regressão detectada no monitoramento forense.' +
+            '</div>' +
+            '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
+          '</div>';
+      } else {
+        const stepNum = (stepIndex !== null && stepIndex !== undefined) ? (stepIndex + 1) : '?';
+        const totalSteps = (r.timeline && r.timeline.length) ? r.timeline.length : '?';
+        const callTimeDisp = (item.call_time_iso ? item.call_time_iso.slice(11, 19) : (item.timestamp_iso ? item.timestamp_iso.slice(11, 19) : '-'));
+        headerBannerHtml = 
+          '<div style="background:#0e2338; border:1px solid #38bdf8; border-radius:8px; padding:12px 14px; margin-bottom:12px; box-shadow:0 0 14px rgba(56,189,248,0.25);">' +
+            '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">' +
+              '<span style="font-weight:800; color:#38bdf8; font-size:0.88rem; display:flex; align-items:center; gap:6px;">' +
+                '<span style="background:#0284c7; color:#fff; padding:2px 7px; border-radius:4px; font-size:0.72rem;">⏱️ PASSO ' + stepNum + ' DE ' + totalSteps + '</span>' +
+                '<span>Linha do Tempo (Caso #' + r.id + ')</span>' +
+              '</span>' +
+              '<button type="button" onclick="selectRegressionForDetails(' + r.id + ');" class="btn-copy" style="font-size:0.70rem; padding:3px 10px; background:#dc2626; color:#fff; border:1px solid #ef4444; border-radius:4px; font-weight:700; cursor:pointer;" title="Voltar a inspecionar a requisição que causou a regressão">🚨 Voltar à Requisição Causadora</button>' +
+            '</div>' +
+            '<div style="font-size:0.74rem; color:#94a3b8; margin-bottom:6px;">' +
+              'Inspecionando leitura cronológica disparada às <strong style="color:#e2e8f0; font-family:monospace;">' + callTimeDisp + '</strong> no servidor <strong style="color:#38bdf8;">' + escapeHtml(item.servidor || '-') + '</strong>.' +
+            '</div>' +
+            '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(item.arquivo || r.arquivo) + '</div>' +
+          '</div>';
+      }
+
+      const versionCardHtml = 
+        '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; background:' + pal.bg + '; border:1px solid ' + pal.border + '; border-radius:8px; padding:8px 12px; margin-bottom:14px;">' +
+          '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+            '<span style="font-size:0.74rem; text-transform:uppercase; color:' + pal.text + '; font-weight:800; display:flex; align-items:center; gap:4px;">' +
+              '<span>🏷️</span> Versão Registrada nesta Requisição:' +
+            '</span>' +
+            verBadge +
+            '<span style="font-family:monospace; font-weight:700; font-size:0.78rem; color:' + pal.text + ';">' +
+              'DG/HG: ' + escapeHtml(itemDgHg) +
+            '</span>' +
+            (itemIdg ? ('<span style="font-family:monospace; font-size:0.74rem; color:' + pal.text + '; background:rgba(0,0,0,0.25); padding:1px 6px; border-radius:3px;">IDG: ' + escapeHtml(itemIdg) + '</span>') : '') +
+            (itemSt ? ('<span style="font-family:monospace; font-size:0.74rem; color:#34d399;">ST: ' + itemSt + '</span>') : '') +
+            (itemTot ? ('<span style="font-family:monospace; font-size:0.74rem; color:#fbbf24;">Tot: ' + itemTot + '</span>') : '') +
+          '</div>' +
+          (isCausative ? ('<div style="font-size:0.72rem; font-family:monospace; color:#fca5a5; display:flex; align-items:center; gap:6px;">' +
+            '<span>Transição:</span>' +
+            '<span style="opacity:0.8;">Anterior ➔</span>' +
+            '<span style="background:#dc2626; color:#fff; padding:1px 5px; border-radius:3px; font-weight:bold;">Retrocesso</span>' +
+          '</div>') : '') +
+        '</div>';
 
       let reqHeadersRowsHtml = '';
       const reqEntries = Object.entries(rawReqHeaders);
@@ -7972,14 +8512,8 @@ function setElText(id, val) {
       }
 
       panelContent.innerHTML = 
-        // Banner de Identificação do Caso Selecionado
-        '<div style="background:#1e293b; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:12px;">' +
-          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
-            '<span style="font-weight:700; color:#38bdf8; font-size:0.85rem;">Caso Forense #' + r.id + '</span>' +
-            '<span style="font-size:0.75rem; color:#94a3b8; font-family:monospace;">' + (r.servidor || '') + ' (' + (r.papel_servidor || (isOriginReg ? 'Fonte Oficial' : 'Cache Akamai')) + ')</span>' +
-          '</div>' +
-          '<div style="font-family:monospace; color:#f8fafc; font-size:0.78rem; word-break:break-all;">' + escapeHtml(r.arquivo) + '</div>' +
-        '</div>' +
+        headerBannerHtml +
+        versionCardHtml +
 
         // 1. METADADOS DE REDE E CONEXÃO
         '<div style="margin-bottom:14px;">' +
@@ -7989,8 +8523,12 @@ function setElText(id, val) {
           '<table style="width:100%; border-collapse:collapse; font-size:0.74rem; background:#1e293b; border-radius:6px; overflow:hidden; border:1px solid #334155;">' +
             '<tbody>' +
               '<tr style="border-bottom:1px solid #334155;">' +
-                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Instância / IP Borda (x-server-ip)</td>' +
-                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + serverIp + '</td>' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">VIP TCP (Cluster Conectado)</td>' +
+                '<td style="color:#38bdf8; font-weight:bold; font-family:monospace; padding:5px 8px;">' + (serverIp !== '-' ? '🌐 ' + escapeHtml(serverIp) : '-') + '</td>' +
+              '</tr>' +
+              '<tr style="border-bottom:1px solid #334155;">' +
+                '<td style="color:#94a3b8; padding:5px 8px; width:190px;">Lâmina Ghost (Akamai Edge)</td>' +
+                '<td style="color:#c084fc; font-weight:bold; font-family:monospace; padding:5px 8px;">' + (ghostIp ? ('⚡ ' + escapeHtml(ghostIp) + ' <span style="font-size:0.68rem; color:#a855f7; font-weight:normal;">(Decodificado do GRN)</span>') : '<span style="color:#64748b;">-</span>') + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Akamai-GRN</td>' +
@@ -7998,11 +8536,11 @@ function setElText(id, val) {
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Instante de Disparo (T_call)</td>' +
-                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (r.call_time_iso || r.timestamp_iso) + '</td>' +
+                '<td style="color:#e2e8f0; font-family:monospace; padding:5px 8px;">' + (item.call_time_iso || item.timestamp_iso || r.call_time_iso || r.timestamp_iso) + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Latência de Rede (RTT)</td>' +
-                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-') + '</td>' +
+                '<td style="color:#34d399; font-family:monospace; padding:5px 8px;">' + ((item.latency_ms !== null && item.latency_ms !== undefined) ? (item.latency_ms + ' ms') : (r.latency_ms !== null && r.latency_ms !== undefined ? (r.latency_ms + ' ms') : '-')) + '</td>' +
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">Camada Web (Server)</td>' +
@@ -8010,10 +8548,10 @@ function setElText(id, val) {
               '</tr>' +
               '<tr style="border-bottom:1px solid #334155;">' +
                 '<td style="color:#94a3b8; padding:5px 8px;">URL da Requisição</td>' +
-                '<td style="color:#38bdf8; font-family:monospace; padding:5px 8px; word-break:break-all;"><a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a></td>' +
+                '<td style="color:#38bdf8; font-family:monospace; padding:5px 8px; word-break:break-all;">' + (originUrl !== '-' ? ('<a href="' + originUrl + '" target="_blank" style="color:#38bdf8;">' + originUrl + '</a>') : '-') + '</td>' +
               '</tr>' +
               '<tr>' +
-                '<td style="color:#94a3b8; padding:5px 8px;">Arquivo Raw em Disco</td>' +
+                '<td style="color:#94a3b8; padding:5px 8px;">Arquivo Raw Gravado</td>' +
                 '<td style="color:#64748b; font-family:monospace; padding:5px 8px; word-break:break-all;">' + rawPath + '</td>' +
               '</tr>' +
             '</tbody>' +
@@ -8250,12 +8788,21 @@ function setElText(id, val) {
             </tr>
             <tr>
               <td style="color:#94a3b8; padding:6px 0; vertical-align:top;">
-                <span class="header-hint" title="IP do servidor de borda (Edge PoP) da Akamai que atendeu a requisição. Permite identificar se requisições caíram em nós diferentes!">
-                  Instância (IP) <span class="hint-icon">?</span>
+                <span class="header-hint" title="VIP Anycast de conexão TCP com a Akamai.">
+                  VIP TCP (Cluster) <span class="hint-icon">?</span>
                 </span>
-                <div class="hint-desc">PoP / Nó de borda</div>
+                <div class="hint-desc">VIP Anycast</div>
               </td>
               <td id="mSimIp" class="code" style="color:#38bdf8; font-weight:700; padding:6px 0; vertical-align:top;">-</td>
+            </tr>
+            <tr>
+              <td style="color:#94a3b8; padding:6px 0; vertical-align:top;">
+                <span class="header-hint" title="Lâmina física Ghost da Akamai que atendeu a requisição, extraída do GRN (edgeServerIp).">
+                  Lâmina Ghost (IP) <span class="hint-icon">?</span>
+                </span>
+                <div class="hint-desc">Ghost Blade Akamai</div>
+              </td>
+              <td id="mSimGhostIp" class="code" style="color:#c084fc; font-weight:700; padding:6px 0; vertical-align:top;">-</td>
             </tr>
             <tr>
               <td style="color:#94a3b8; padding:6px 0; vertical-align:top;">
@@ -9358,11 +9905,11 @@ function getEnrichedRegressions(filters = {}) {
     const cleanQ = q.replace(/^#/, '');
     const qNum = parseInt(cleanQ, 10);
     if (!isNaN(qNum) && String(qNum) === cleanQ) {
-      sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
-      params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+      sql += 'AND (id = ? OR idg_recebido = ? OR idg_anterior = ? OR arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR ghost_ip LIKE ? OR server_ip LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+      params.push(qNum, cleanQ, cleanQ, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
     } else {
-      sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
-      params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
+      sql += 'AND (arquivo LIKE ? OR motivo LIKE ? OR servidor LIKE ? OR akamai_grn LIKE ? OR ghost_ip LIKE ? OR server_ip LIKE ? OR headers_json LIKE ? OR request_headers_json LIKE ?) ';
+      params.push(`%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`, `%${cleanQ}%`);
     }
   } else if (!grnFilter && !filters.allRodada) {
     sql += 'AND timestamp_iso >= ? ';
@@ -9417,7 +9964,7 @@ function getEnrichedRegressions(filters = {}) {
   const stmtTimelineRange = db.prepare(`
     SELECT 
       id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
+      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, ghost_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
       call_time_iso, call_time_unix, latency_ms
     FROM leituras
     WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
@@ -9426,7 +9973,7 @@ function getEnrichedRegressions(filters = {}) {
   const stmtTimelineFallback = db.prepare(`
     SELECT 
       id, timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo,
-      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
+      idg, dg, hg, dt, ht, secoes, etag, status_ordem, server_ip, ghost_ip, cache_control, cdn_status, akamai_grn, headers_json, request_headers_json, evidencia_raw_path,
       call_time_iso, call_time_unix, latency_ms
     FROM leituras
     WHERE arquivo = ? AND timestamp_unix >= ? AND timestamp_unix <= ?
@@ -9465,6 +10012,8 @@ function getEnrichedRegressions(filters = {}) {
     }
     const cacheSummary = (rawMeta && rawMeta.cache_control_headers) || null;
     const itemAkamaiGrn = r.akamai_grn || rawHeaders['akamai-grn'] || rawHeaders['x-akamai-grn'] || null;
+    const itemGhostIp = r.ghost_ip || (itemAkamaiGrn ? decodeAkamaiGrn(itemAkamaiGrn)?.ghostIp : null) || null;
+    const itemServerIp = r.server_ip || rawHeaders['x-server-ip'] || (r.servidor === 'HMG' ? '192.168.218.33' : null);
 
     const regUnix = new Date(r.timestamp_iso).getTime();
     const rRodada = findRodadaForTimestamp(regUnix);
@@ -9483,6 +10032,8 @@ function getEnrichedRegressions(filters = {}) {
     const enrichedTimeline = timeline.map(t => {
       let tHeaders = {};
       let tReqHeaders = {};
+      const isRegressionPoint = Boolean(t.status_ordem === 'REGRESSAO_DETECTADA' || t.id === r.id || (Math.abs(t.timestamp_unix - regUnix) < 2000 && t.servidor === r.servidor));
+
       if (!filters.light) {
         if (t.headers_json) {
           try {
@@ -9494,15 +10045,21 @@ function getEnrichedRegressions(filters = {}) {
         if (t.request_headers_json) {
           try { tReqHeaders = JSON.parse(t.request_headers_json); } catch(e) {}
         }
+        if (Object.keys(tHeaders).length === 0 && (t.id === r.id || isRegressionPoint)) {
+          tHeaders = rawHeaders;
+        }
+        if (Object.keys(tReqHeaders).length === 0 && (t.id === r.id || isRegressionPoint)) {
+          tReqHeaders = rawReqHeaders;
+        }
       }
       const tServerIp = t.server_ip || tHeaders['x-server-ip'] || (t.servidor === 'HMG' ? '192.168.218.33' : '-');
+      const tAkamaiGrn = t.akamai_grn || tHeaders['akamai-grn'] || tHeaders['x-akamai-grn'] || (t.id === r.id ? itemAkamaiGrn : null) || '-';
+      const tGhostIp = t.ghost_ip || (tAkamaiGrn && tAkamaiGrn !== '-' ? decodeAkamaiGrn(tAkamaiGrn)?.ghostIp : null) || null;
       const tCacheControl = t.cache_control || tHeaders['cache-control'] || '-';
       const tCdnStatus = t.cdn_status || tHeaders['cdn-cache-status'] || tHeaders['x-cache'] || (t.servidor === 'HMG' ? 'ORIGIN' : '-');
-      const tAkamaiGrn = t.akamai_grn || tHeaders['akamai-grn'] || tHeaders['x-akamai-grn'] || (t.id === r.id ? itemAkamaiGrn : null) || '-';
       const tEtag = t.etag || tHeaders['etag'] || '-';
       const tExpires = tHeaders['expires'] || '-';
       const tAge = tHeaders['age'] !== undefined ? tHeaders['age'] + 's' : '-';
-      const isRegressionPoint = Boolean(t.status_ordem === 'REGRESSAO_DETECTADA' || t.id === r.id || (Math.abs(t.timestamp_unix - regUnix) < 2000 && t.servidor === r.servidor));
 
       return {
         id: t.id,
@@ -9513,6 +10070,8 @@ function getEnrichedRegressions(filters = {}) {
         latency_ms: t.latency_ms !== undefined ? t.latency_ms : null,
         servidor: t.servidor,
         papel_servidor: t.papel_servidor,
+        arquivo: t.arquivo || r.arquivo,
+        evidencia_raw_path: t.evidencia_raw_path || (t.id === r.id ? r.evidencia_raw_path : null),
         dg: t.dg,
         hg: t.hg,
         dt: t.dt,
@@ -9521,13 +10080,18 @@ function getEnrichedRegressions(filters = {}) {
         secoes: t.secoes,
         status_ordem: t.status_ordem,
         server_ip: tServerIp,
+        ghost_ip: tGhostIp,
         cache_control: tCacheControl,
         cdn_status: tCdnStatus,
         akamai_grn: tAkamaiGrn,
         etag: tEtag,
         expires: tExpires,
         age: tAge,
-        isRegressionPoint
+        isRegressionPoint,
+        response_headers: tHeaders,
+        request_headers: tReqHeaders,
+        headers_json: t.headers_json,
+        request_headers_json: t.request_headers_json
       };
     });
 
@@ -9536,6 +10100,8 @@ function getEnrichedRegressions(filters = {}) {
         id: r.id,
         timestamp_iso: r.timestamp_iso,
         call_time_iso: r.call_time_iso || r.timestamp_iso,
+        call_time_unix: r.call_time_unix,
+        latency_ms: r.latency_ms !== undefined ? r.latency_ms : null,
         servidor: r.servidor,
         papel_servidor: r.papel_servidor,
         arquivo: r.arquivo,
@@ -9557,6 +10123,12 @@ function getEnrichedRegressions(filters = {}) {
         votos_anterior: r.votos_anterior,
         votos_recebido: r.votos_recebido,
         akamai_grn: itemAkamaiGrn,
+        server_ip: itemServerIp,
+        ghost_ip: itemGhostIp,
+        evidencia_raw_path: r.evidencia_raw_path || null,
+        request_headers: rawReqHeaders,
+        response_headers: rawHeaders,
+        cache_control_headers: cacheSummary,
         fileMeta: parseFileMetadata(r.arquivo),
         timeline: enrichedTimeline
       };
@@ -9565,6 +10137,8 @@ function getEnrichedRegressions(filters = {}) {
     return {
       ...r,
       akamai_grn: itemAkamaiGrn,
+      server_ip: itemServerIp,
+      ghost_ip: itemGhostIp,
       fileMeta: parseFileMetadata(r.arquivo),
       rawMeta,
       request_headers: rawReqHeaders,
@@ -10167,7 +10741,7 @@ function startDashboardServer() {
         const rodadaIdParam = url.searchParams.get('rodadaId');
         const rodadaId = (rodadaIdParam && rodadaIdParam !== 'all') ? rodadaIdParam : null;
         const allRodada = rodadaIdParam === 'all' || url.searchParams.get('all') === '1' || url.searchParams.get('allRodada') === '1';
-        const light = url.searchParams.get('light') === '1' || limit > 100;
+        const light = url.searchParams.get('light') === '1';
         const payload = getEnrichedRegressions({
           limit,
           allRodada,

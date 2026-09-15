@@ -5,6 +5,25 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/pt-BR/).
 
+## [1.0.0.4] - 2026-09-15 - Linha do Tempo Forense Interativa e Decodificação Ghost Akamai
+
+### Adicionado
+- **Interatividade Total na Linha do Tempo de Requisições:**
+  - Inspeção pontual de qualquer leitura cronológica (preliminar, intermediária ou posterior) com atualização em tempo real do **Painel Forense & Detalhes Técnicos**.
+  - Exibição sob demanda dos cabeçalhos HTTP completos (`Request Headers` e `Response Headers`), latência (RTT), instante de chamada e diretivas RFC 7234 para cada requisição da timeline.
+- **Destaque Forense à Requisição Causadora do Caso:**
+  - Destaque visual com badge pulsante vermelho `🚨 REQUISIÇÃO CAUSADORA DO CASO FORENSE` na timeline e banner pericial dedicado no painel técnico.
+  - Botão de ação rápida `[🚨 Voltar à Requisição Causadora]` para restauração imediata do foco no ponto de anomalia durante a navegação entre passos.
+- **Trilha Visual de Versões (Taxonomia V1, V2, ...):**
+  - Mapeamento e vinculação cromática consistente das versões de arquivos ao longo de todo o dossiê e cabeçalho técnico.
+- **Decodificação e Persistência da Lâmina Ghost Akamai Edge (`ghost_ip`):**
+  - Decodificação pontual e retroativa de endereços IPv4 da lâmina Ghost a partir do *Ghost Reference Number* (GRN) no formato Little-Endian hexadecimal.
+  - Exibição transparente tanto do VIP TCP de Conexão quanto da Lâmina Ghost no Dashboard Web e nos Dossiês Forenses.
+- **Paridade Completa no Relatório Offline:**
+  - Espelhamento de todas as rotinas interativas e decodificadores para relatórios HTML estáticos exportados (`relatorio_evidencias.html`).
+
+---
+
 ## [1.0.0.2] - 2026-09-14 - Hotfix Dossiê Forense de Regressões Detectadas
 
 ### Corrigido
