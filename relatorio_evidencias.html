@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dossiê Técnico Forense v1.0.0.4: Fonte HMG vs Cache SIM (TDTot TSE)</title>
+  <title>Dossiê Técnico Forense v1.0.0.7: Fonte HMG vs Cache SIM (TDTot TSE)</title>
   <script>
     (function() {
       try {
@@ -235,7 +235,7 @@
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.0.4</span></h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.0.7</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -251,7 +251,7 @@
         <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(atualizado agora)</span>
       </div>
       <button onclick="loadReportData()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Atualizar dados do dossiê">↺ Atualizar</button>
-      <a href="/export/dossie-html" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Baixar arquivo HTML autônomo offline para compartilhamento">📥 Baixar HTML Offline</a>
+      <a href="/export/dossie-html" onclick="event.preventDefault(); downloadOfflineDossie();" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Baixar arquivo HTML autônomo offline para compartilhamento">📥 Baixar HTML Offline</a>
       <a href="/" target="_blank" class="btn" style="background: #475569; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Abrir Dashboard Principal">📊 Abrir Dashboard</a>
       
     </div>
@@ -1265,6 +1265,14 @@
       document.getElementById('filterStatus').value = '';
       onRodadaFilterChanged();
     }
+
+    function downloadOfflineDossie() {
+      const sel = document.getElementById('filterRodada');
+      const fRod = sel ? sel.value : '';
+      const url = (fRod && fRod !== 'all') ? ('/export/dossie-html?rodadaId=' + encodeURIComponent(fRod)) : '/export/dossie-html';
+      window.location.href = url;
+    }
+
 
     // =====================================================================
     // APLICAÇÃO DE FILTROS E ORDENAÇÃO

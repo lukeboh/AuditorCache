@@ -5,6 +5,96 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/pt-BR/).
 
+## [1.0.0.8] - 2026-09-22 - Correção de Rastreamento de Réplicas no fileSyncTracker e Suporte a URLs de Aplicação
+
+### Corrigido
+- **Correção no Rastreamento de Versão Alvo em Réplicas (`fileSyncTracker`):**
+  - Correção crítica no método `processVersion`: anteriormente, leituras de réplica servindo versões antigas (ex: V1) gravavam indevidamente `tracker.firstSeenCdnAt` e marcavam a sincronização no nó antes da chegada da nova versão (V2).
+  - Implementada a validação estrita `isTargetOrNewer`: `firstSeenCdnAt` e a conclusão de sincronização só são carimbados quando a réplica efetivamente entrega a versão alvo ou superior.
+  - Correção na resolução de tolerância de cache da Akamai para priorizar `Math.max(cdnFirstSeen, tracker.firstSeenCdnAt)` e validar com precisão o tempo decorrido do cabeçalho `Last-Modified` (`elapsedLmSec <= 60s`).
+  - Eliminação de alarmes falsos de regressão provocados por alternância rápida entre lâminas Ghost Anycast durante o ciclo normal de TTL (23s de oscilação real vs 320s calculados incorretamente no passado).
+
+### Adicionado
+- **Detecção e Ajuste Automático de URLs de Aplicação Web no Cadastro de Servidores:**
+  - Auto-detecção de sufixos de front-end SPA/HTML como `/app/index.html` em `/api/servidores/testar` e `/api/servidores/salvar`.
+  - Sugestão instantânea da URL base correta do backend de dados com substituição amigável no modal do Dashboard, prevenindo falhas de teste de conectividade.
+
+---
+
+## [1.0.0.7] - 2026-09-21 - Duplo Critério de Atraso (Akamai vs TSE) e SLA Individualizado no Dashboard
+
+### Adicionado
+- **Desacoplamento do Duplo Critério de Avaliação de Atraso e Integridade:**
+  - **Critério 1: Falha de Integridade / Regressão de Cache (Critério Akamai):**
+    - Medição de tolerância de 60s (ciclo de cache TTL CDN) contados estritamente a partir do momento em que a CDN/borda detecta e serve pela primeira vez a nova versão (`firstSeenCdnAt`).
+    - Se durante o ciclo de 60s um nó de borda entregar versão anterior, o evento é classificado como convergência normal de cache (`EM_PROPAGACAO` / `CONVERGENCIA_CACHE_AKAMAI`), gravando telemetria em `leituras` sem disparar alarme falso de regressão nem poluir a tabela `regressoes`.
+    - Se após 60s da detecção da nova versão pela CDN um nó de borda retroceder para uma versão defasada, confirma-se Falha de Integridade de Cache Akamai (Ghost Cache / regressão real).
+  - **Critério 2: SLA de Latência de Propagação (Critério TSE):**
+    - Medição de SLA ponta a ponta (padrão: 90s), calculado a partir da publicação do arquivo na Origem (HMG).
+    - Permite auditar com precisão o tempo total que as réplicas levaram para disponibilizar o dado aos usuários finais, identificando estouros de SLA contratual/operacional.
+  - **Parâmetros Independentes de Configuração e Hot-Reload:**
+    - Novos parâmetros `tolerancia_cache_akamai_segundos` (60s) e `sla_propagacao_tse_segundos` (90s), persistidos no SQLite com hot-reload sem reiniciar o processo.
+    - Modal de configurações no Dashboard e resumo de parâmetros no cabeçalho atualizados para: `Matriz: 10s | Réplicas: 10s | Cache Akamai: 60s | SLA TSE: 90s`.
+    - Endpoints REST `GET /api/configuracoes` e `POST /api/configuracoes` atualizados para gerenciar ambos os limiares.
+
+- **Evolução do Card 4 de KPIs: "Cache (SLAs Acumulados)":**
+  - **Suporte a Visão Consolidada e Nós Individuais:**
+    - Botões interativos em formato de *pill* (`Consolidado`, `SIM-UNIFICADO`, `SIM-INTERESSADOS`, etc.) no cabeçalho do Card 4.
+    - Alternância em tempo real com 1 clique: os percentis do card (Média, P90, P95, P99, P100) e a contagem de arquivos desincronizados recalculam imediatamente para refletir o nó selecionado ou a média de todos os nós.
+    - Barra inferior de resumo permanente (`Nós: SIM-UNIFICADO: 0m 14s (P95: 0m 19s) | ...`) exibindo todos os nós simultaneamente com atalho para focar no nó desejado.
+
+### Corrigido
+- **Cálculo de SLA Resiliente para Nós com Nomes Customizados:**
+  - Correção na query SQLite de cálculo de SLA que antes comparava apenas nomes legados `'HMG'` e `'SIM'`, ignorando servidores configurados como `HMG-UNIFICADO`, `SIM-UNIFICADO` e `SIM-INTERESSADOS`.
+  - Implementado pattern matching resiliente (`papel_servidor LIKE '%ORIGEM%'` vs `NOT (...)`) com agrupamento dinâmico por réplica, gerando tanto `todaySlaStats` (consolidado) quanto `replicaSlaStats` (por nó).
+
+---
+
+## [1.0.0.6] - 2026-09-16 - Exportação do Dossiê Pericial Offline Autônomo (Padrão Rodada #20)
+
+### Adicionado
+- **Exportação do Dossiê Pericial Offline Autônomo (Padrão Rodada #20):**
+  - Implementação do motor gerador `dossie_offline_generator.js` integrado à rota `/export/dossie-html`.
+  - Ao clicar no botão `📥 Baixar HTML Offline` no Dossiê Técnico Forense (`/report`), o arquivo HTML gerado reproduz com fidelidade pericial estrita todos os requisitos de `relatorio_regressoes_rodada_20.html`.
+  - Reconstrução da cadeia causal de cada incidente com janela pericial completa de 7 leituras (Origem HMG, Histórico Prévio, Referência Anterior / Pico, Regressão Detectada, Recuperação / Normalização).
+  - Grid pericial de 25 colunas técnicas organizadas por grupos funcionais com reorganização Drag & Drop dos cabeçalhos e botão de restauração.
+  - Exportação inteligente para CSV em UTF-8 com BOM respeitando rigorosamente a ordem visual reorganizada das colunas na tela.
+  - Painel executivo com 4 cards de KPIs calculados em tempo real (Ocorrências Auditadas com faixa de IDs, Requisições no Contexto com média calculada, % SIM e % Conformidade da Origem HMG).
+  - Modal forense escuro de headers HTTP brutos (Request e Response headers completos em JSON formatado).
+  - Arquivo 100% autocontido e portável (Zero chamadas externas ou scripts de CDNs, dados brutos incorporados em `const RAW_DATA` e `const OCCURRENCES_DATA`).
+
+### Corrigido
+- **Classificação Agnóstica de Servidores Origem vs Réplica no Dossiê Offline:**
+  - Correção na identificação de nós monitorados com sufixos dinâmicos (`HMG-UNIFICADO`, `HMG-INTERESSADOS`, `SIM-UNIFICADO`, `SIM-INTERESSADOS`).
+  - Anteriormente, a verificação por igualdade estrita (`=== 'HMG'`) classificava requisições do servidor de origem com outro nome como réplicas simuladas, rotulando com badge âmbar `SIM` em vez de roxo `HMG`, atribuindo status de histórico prévio/recuperação em vez de `🟣 ORIGEM` e zerando o filtro "Apenas HMG (Origem)".
+  - Suporte completo tanto às rodadas históricas (ex: Rodada #20 com nós `HMG`/`SIM`) quanto às novas rodadas unificadas (`HMG-UNIFICADO`/`SIM-UNIFICADO`), com contadores dinâmicos nos botões de filtro (`Apenas HMG (227)` e `Apenas SIM (319)`).
+  - Inclusão do acionador `📥 Exportar HTML Offline` no modal de regressões do Dashboard com repasse automático do ID da rodada ativa e termos de busca.
+
+---
+
+## [1.0.0.5] - 2026-09-16 - Parametrização de Polling Desacoplado e Tolerância de 90s Akamai CDN
+
+### Adicionado
+- **Parametrização Independente dos Ciclos de Busca (Polling Desacoplado):**
+  - Desacoplamento da varredura contínua entre Servidor Matriz (Origem) e Servidores Replicados (Cache / Borda / CDN).
+  - Dois novos parâmetros com persistência no SQLite e hot-reload em tempo de execução:
+    - `intervalo_matriz_segundos`: Frequência de consulta ao nó de origem (padrão: 10s).
+    - `intervalo_replicas_segundos`: Frequência de consulta aos nós de cache/distribuição (padrão: 10s).
+  - Pools de workers concorrentes isolados protegidos contra sobreposição de ciclos via timers assíncronos.
+- **Janela de Tolerância Akamai de 90s para Falha de Integridade Registrável:**
+  - Novo parâmetro `tolerancia_propagacao_segundos` (padrão: 90s), baseado nas premissas técnicas da Akamai (30s para término do pipeline de publicação do TSE + 60s de ciclo de cache CDN).
+  - As leituras em intervalos curtos (10s) continuam ocorrendo para alimentação de métricas e medição exata do tempo de convergência.
+  - Leituras divergentes/intermediárias observadas durante a janela de tolerância de 90s são classificadas como `EM_PROPAGACAO`, gravando telemetria em `leituras`, mas sem registrar falso positivo em `regressoes` nem no arquivo `regressoes_detectadas.csv`.
+  - Apenas divergências que persistirem após extrapolar o limite de 90s da publicação são registradas como falha de integridade confirmada com evidência raw.
+- **Gestão de Parâmetros no Dashboard Web & API REST:**
+  - Novos endpoints `GET /api/configuracoes` e `POST /api/configuracoes` com propagação de eventos via Server-Sent Events (SSE).
+  - Novo modal interativo **`⏱️ Parâmetros de Polling e Tolerância Akamai CDN`** no cabeçalho do Dashboard.
+  - Indicador visual permanente dos parâmetros ativos na barra superior (`headerParamsSummary`).
+
+
+
+---
+
 ## [1.0.0.4] - 2026-09-15 - Linha do Tempo Forense Interativa e Decodificação Ghost Akamai
 
 ### Adicionado

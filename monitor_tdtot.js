@@ -16,7 +16,7 @@ const { DatabaseSync } = require('node:sqlite');
 const CDP_PORT = 9222;
 const DASHBOARD_PORT = 3333;
 const WORKSPACE_DIR = __dirname;
-let APP_VERSION = 'v1.0.0.4';
+let APP_VERSION = 'v1.0.0.7';
 try {
   const pkg = JSON.parse(fs.readFileSync(path.join(WORKSPACE_DIR, 'package.json'), 'utf8'));
   if (pkg.version) APP_VERSION = 'v' + pkg.version;
@@ -355,6 +355,58 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_req_headers ON leituras (
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_ghost_ip ON leituras (ghost_ip);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_ghost_ip ON regressoes (ghost_ip);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_server_ip ON regressoes (server_ip);'); } catch (e) {}
+
+// =====================================================================
+// TABELA DE CONFIGURAÇÕES E PARÂMETROS DO SISTEMA
+// =====================================================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS configuracoes (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL,
+    descricao TEXT,
+    atualizado_em TEXT
+  );
+`);
+
+const configCache = new Map();
+
+function initConfiguracoes() {
+  const defaults = [
+    { chave: 'intervalo_matriz_segundos', valor: '10', descricao: 'Intervalo de busca no servidor matriz (origem) em segundos' },
+    { chave: 'intervalo_replicas_segundos', valor: '10', descricao: 'Intervalo de busca nos servidores replicados (cache/CDN) em segundos' },
+    { chave: 'tolerancia_cache_akamai_segundos', valor: '60', descricao: 'Tolerância para convergência interna de cache na CDN Akamai (segundos)' },
+    { chave: 'sla_propagacao_tse_segundos', valor: '90', descricao: 'SLA máximo de latência de propagação e totalização global do TSE (segundos)' },
+    { chave: 'tolerancia_propagacao_segundos', valor: '60', descricao: 'Tolerância legado de convergência de cache' }
+  ];
+
+  const nowIso = new Date().toISOString();
+  const stmtInsert = db.prepare('INSERT OR IGNORE INTO configuracoes (chave, valor, descricao, atualizado_em) VALUES (?, ?, ?, ?)');
+  for (const d of defaults) {
+    stmtInsert.run(d.chave, d.valor, d.descricao, nowIso);
+  }
+
+  const rows = db.prepare('SELECT chave, valor FROM configuracoes').all();
+  for (const r of rows) {
+    configCache.set(r.chave, r.valor);
+  }
+  console.log(`⚙️ [CONFIGURAÇÕES] Matriz: ${getConfig('intervalo_matriz_segundos', 10)}s | Réplicas: ${getConfig('intervalo_replicas_segundos', 10)}s | Cache Akamai: ${getConfig('tolerancia_cache_akamai_segundos', 60)}s | SLA TSE: ${getConfig('sla_propagacao_tse_segundos', 90)}s`);
+}
+
+function getConfig(key, defaultValue) {
+  if (configCache.has(key)) {
+    const val = configCache.get(key);
+    const num = Number(val);
+    return isNaN(num) ? val : num;
+  }
+  return defaultValue;
+}
+
+function setConfig(key, value) {
+  const nowIso = new Date().toISOString();
+  db.prepare('INSERT INTO configuracoes (chave, valor, atualizado_em) VALUES (?, ?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em')
+    .run(key, String(value), nowIso);
+  configCache.set(key, String(value));
+}
 
 const stmtInsertLeitura = db.prepare(`
   INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json, ghost_ip)
@@ -1084,18 +1136,20 @@ function getComparison(relPath) {
     } else {
       syncSlaSec = 0;
     }
-    syncSlaStatus = syncSlaSec > 30 ? 'ALERTA' : 'OK';
+    const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
+    syncSlaStatus = syncSlaSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
     syncSlaText = formatMinSec(syncSlaSec);
   } else if (tracker) {
+    const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
     const refTime = tracker.originDetectedAt || tracker.hmgDetectedAt;
     if (tracker.isWaiting && refTime) {
       const elapsed = Math.max(0, Math.round((Date.now() - refTime) / 1000));
       syncSlaSec = elapsed;
-      syncSlaStatus = elapsed > 30 ? 'CRITICO' : 'AGUARDANDO';
-      syncSlaText = `⏱️ ${formatMinSec(elapsed)} (em sync)`;
+      syncSlaStatus = elapsed > toleranciaSlaSec ? 'CRITICO' : 'AGUARDANDO';
+      syncSlaText = elapsed > toleranciaSlaSec ? `🚨 ${formatMinSec(elapsed)} (limite extrapolado)` : `⏱️ ${formatMinSec(elapsed)} (em propagação)`;
     } else if (tracker.lastSyncSec !== null) {
       syncSlaSec = tracker.lastSyncSec;
-      syncSlaStatus = tracker.lastSyncSec > 30 ? 'ALERTA' : 'OK';
+      syncSlaStatus = tracker.lastSyncSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
       syncSlaText = formatMinSec(tracker.lastSyncSec);
     }
   }
@@ -1131,18 +1185,19 @@ function getComparison(relPath) {
         }
       }
 
+      const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
       const repInSync = (originState.dg === rState.dg && originState.hg === rState.hg);
       if (repInSync) {
         const repTracker = tracker?.replicas?.[rep.chave];
         rSyncSlaSec = repTracker?.syncSec ?? tracker?.lastSyncSec ?? 0;
-        rSyncSlaStatus = rSyncSlaSec > 30 ? 'ALERTA' : 'OK';
+        rSyncSlaStatus = rSyncSlaSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
         rSyncSlaText = formatMinSec(rSyncSlaSec);
       } else if (tracker && (tracker.originDetectedAt || tracker.hmgDetectedAt)) {
         const refTime = tracker.originDetectedAt || tracker.hmgDetectedAt;
         const elapsed = Math.max(0, Math.round((Date.now() - refTime) / 1000));
         rSyncSlaSec = elapsed;
-        rSyncSlaStatus = elapsed > 30 ? 'CRITICO' : 'AGUARDANDO';
-        rSyncSlaText = `⏱️ ${formatMinSec(elapsed)}`;
+        rSyncSlaStatus = elapsed > toleranciaSlaSec ? 'CRITICO' : 'AGUARDANDO';
+        rSyncSlaText = elapsed > toleranciaSlaSec ? `🚨 ${formatMinSec(elapsed)}` : `⏱️ ${formatMinSec(elapsed)}`;
       }
     }
 
@@ -1533,7 +1588,7 @@ function generateHtmlReport(embeddedData = null) {
         <span id="lastRefreshTime" style="color: var(--text-muted); font-size: 0.72rem;">(atualizado agora)</span>
       </div>
       <button onclick="loadReportData()" class="btn" style="background: #334155; padding: 6px 12px; font-size: 0.78rem;" title="Atualizar dados do dossiê">↺ Atualizar</button>
-      <a href="/export/dossie-html" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Baixar arquivo HTML autônomo offline para compartilhamento">📥 Baixar HTML Offline</a>
+      <a href="/export/dossie-html" onclick="event.preventDefault(); downloadOfflineDossie();" class="btn" style="background: #0284c7; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Baixar arquivo HTML autônomo offline para compartilhamento">📥 Baixar HTML Offline</a>
       <a href="/" target="_blank" class="btn" style="background: #475569; padding: 6px 12px; font-size: 0.78rem; text-decoration: none;" title="Abrir Dashboard Principal">📊 Abrir Dashboard</a>
       `}
     </div>
@@ -2547,6 +2602,14 @@ function generateHtmlReport(embeddedData = null) {
       document.getElementById('filterStatus').value = '';
       onRodadaFilterChanged();
     }
+
+    function downloadOfflineDossie() {
+      const sel = document.getElementById('filterRodada');
+      const fRod = sel ? sel.value : '';
+      const url = (fRod && fRod !== 'all') ? ('/export/dossie-html?rodadaId=' + encodeURIComponent(fRod)) : '/export/dossie-html';
+      window.location.href = url;
+    }
+
 
     // =====================================================================
     // APLICAÇÃO DE FILTROS E ORDENAÇÃO
@@ -4692,31 +4755,129 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
   let criterion = isRegression ? violatedCriteria.join(' + ') : 'NORMAL';
 
+  const originServer = getOriginServer();
+  const isOriginNode = originServer && (originServer.chave === serverKey);
+  const tracker = fileSyncTracker.get(relPath);
+  const tolAkamaiSec = getConfig('tolerancia_cache_akamai_segundos', 60);
+  const slaTseSec = getConfig('sla_propagacao_tse_segundos', 90);
+
   if (isRegression) {
+    // Para nós de RÉPLICA / BORDA / CDN (ex: SIM, Akamai), aplica os critérios desacoplados:
+    // 1) Critério Akamai: Tolerância de cache (60s) a partir da 1ª entrega da versão nova pela própria CDN
+    // 2) Critério TSE: SLA de propagação (90s) a partir da publicação na Origem
+    if (!isOriginNode) {
+      // Determina quando a versão MAIS RECENTE (prev) foi observada pela CDN:
+      // 1) Prioriza o momento em que a versão mais nova (prev) foi entregue pela própria réplica
+      let cdnFirstSeen = prev ? (prev.firstSeenAt || prev.callTimeUnix || prev.timestampUnix) : null;
+      if (tracker && tracker.firstSeenCdnAt && tracker.firstSeenCdnAt > 0) {
+        if (!cdnFirstSeen) {
+          cdnFirstSeen = tracker.firstSeenCdnAt;
+        } else if (tracker.targetDg === prev?.dg && tracker.targetHg === prev?.hg) {
+          cdnFirstSeen = Math.max(cdnFirstSeen, tracker.firstSeenCdnAt);
+        }
+      }
+
+      // 2) Avalia o tempo decorrido desde o Last-Modified da versão mais nova entregue pela CDN
+      const prevLmUnix = (prev && prev.lastModifiedHeader) ? new Date(prev.lastModifiedHeader).getTime() : null;
+      const elapsedLmSec = (prevLmUnix && !isNaN(prevLmUnix)) ? Math.max(0, Math.round((callTimeUnix - prevLmUnix) / 1000)) : null;
+
+      let elapsedCdnSec = cdnFirstSeen ? Math.max(0, Math.round((callTimeUnix - cdnFirstSeen) / 1000)) : elapsedLmSec;
+
+      // Se o Last-Modified demonstrar que a versão nova foi gerada/entregue há menos de 60s, respeita a janela Akamai
+      if (elapsedLmSec !== null && elapsedLmSec <= tolAkamaiSec && (elapsedCdnSec === null || elapsedCdnSec > tolAkamaiSec)) {
+        elapsedCdnSec = elapsedLmSec;
+      }
+
+      const originPubTime = tracker ? (tracker.originDetectedAt || tracker.hmgDetectedAt) : null;
+      const elapsedOrigemSec = originPubTime ? Math.max(0, Math.round((callTimeUnix - originPubTime) / 1000)) : null;
+
+      if (elapsedCdnSec !== null && elapsedCdnSec <= tolAkamaiSec) {
+        // DENTRO DA TOLERÂNCIA DE 60s DA AKAMAI:
+        // Trata-se de convergência transitória interna da malha Anycast da CDN, NÃO constituindo falha de cache Akamai!
+        currentMeta.status = 'EM_PROPAGACAO';
+        currentMeta.criterion = 'CONVERGENCIA_CACHE_AKAMAI';
+        let detailMsg = `${reasons.join(' | ')} [EM CONVERGÊNCIA AKAMAI: ${elapsedCdnSec}s decorridos <= janela de ${tolAkamaiSec}s]`;
+        if (elapsedOrigemSec !== null && elapsedOrigemSec > slaTseSec) {
+          detailMsg += ` [ATENÇÃO: VIOLAÇÃO DE SLA TSE: ${elapsedOrigemSec}s > ${slaTseSec}s]`;
+        }
+        currentMeta.details = detailMsg;
+
+        console.log(`[${localTime}] ${YELLOW}⏳ [${serverKey} EM CONVERGÊNCIA AKAMAI]${RESET} ${BOLD}${filename}${RESET}: Oscilação transitória de borda (${elapsedCdnSec}s decorridos <= ${tolAkamaiSec}s).`);
+
+        // Grava apenas em leituras (telemetria completa e rastreio de nós Ghost), SEM registrar em regressoes e SEM alarme
+        recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'EM_PROPAGACAO');
+
+        // Preserva o snapshot de maior versão já observado para avaliar se a CDN irá convergir ou extrapolar
+        if (prev && (!prev.genTime || (genTime && genTime < prev.genTime))) {
+          prev.callTimeUnix = currentMeta.callTimeUnix;
+          prev.callTimeIso = currentMeta.callTimeIso;
+          prev.latencyMs = currentMeta.latencyMs;
+          if (currentMeta.serverIp) prev.serverIp = currentMeta.serverIp;
+          if (currentMeta.ghostIp) prev.ghostIp = currentMeta.ghostIp;
+          if (currentMeta.akamaiGrn) prev.akamaiGrn = currentMeta.akamaiGrn;
+        } else {
+          serverStates[serverKey].set(relPath, currentMeta);
+        }
+        logComparisonRow(relPath);
+        return;
+      }
+    }
+
+    // Se for na ORIGEM ou se EXTRAPOLOU os 60s na RÉPLICA: Falha de Integridade / Regressão Confirmada!
+    const originPubTime = tracker ? (tracker.originDetectedAt || tracker.hmgDetectedAt) : (prev ? (prev.callTimeUnix || prev.timestampUnix) : null);
+    const elapsedOrigemSec = originPubTime ? Math.max(0, Math.round((callTimeUnix - originPubTime) / 1000)) : null;
+    let cdnFirstSeen = prev ? (prev.firstSeenAt || prev.callTimeUnix || prev.timestampUnix) : null;
+    if (tracker && tracker.firstSeenCdnAt && tracker.firstSeenCdnAt > 0) {
+      if (!cdnFirstSeen) {
+        cdnFirstSeen = tracker.firstSeenCdnAt;
+      } else if (tracker.targetDg === prev?.dg && tracker.targetHg === prev?.hg) {
+        cdnFirstSeen = Math.max(cdnFirstSeen, tracker.firstSeenCdnAt);
+      }
+    }
+    const prevLmUnix = (prev && prev.lastModifiedHeader) ? new Date(prev.lastModifiedHeader).getTime() : null;
+    const elapsedLmSec = (prevLmUnix && !isNaN(prevLmUnix)) ? Math.max(0, Math.round((callTimeUnix - prevLmUnix) / 1000)) : null;
+    let elapsedCdnSec = cdnFirstSeen ? Math.max(0, Math.round((callTimeUnix - cdnFirstSeen) / 1000)) : elapsedLmSec;
+    if (elapsedLmSec !== null && elapsedLmSec <= tolAkamaiSec && (elapsedCdnSec === null || elapsedCdnSec > tolAkamaiSec)) {
+      elapsedCdnSec = elapsedLmSec;
+    }
+
+    let elapsedMsg = '';
+    if (!isOriginNode) {
+      if (elapsedCdnSec !== null) {
+        elapsedMsg += ` [FALHA DE CACHE AKAMAI: extrapolou tolerância de ${tolAkamaiSec}s (${elapsedCdnSec}s pós-CDN)]`;
+      }
+      if (elapsedOrigemSec !== null && elapsedOrigemSec > slaTseSec) {
+        elapsedMsg += ` [VIOLAÇÃO SLA TSE: ${elapsedOrigemSec}s pós-origem > ${slaTseSec}s]`;
+      }
+    }
+
     currentMeta.status = 'REGRESSAO_DETECTADA';
-    currentMeta.criterion = criterion;
+    currentMeta.criterion = (!isOriginNode ? 'FALHA CACHE AKAMAI + ' : 'ORIGEM + ') + criterion + (elapsedMsg ? ' [CONFIRMADO]' : '');
     currentMeta.prevIdg = prev.idg;
     currentMeta.prevDg = prev.dg;
     currentMeta.prevHg = prev.hg;
     currentMeta.prevDt = prev.dt;
     currentMeta.prevHt = prev.ht;
     currentMeta.prevSt = prev.st;
-    currentMeta.details = reasons.join(' | ');
+    currentMeta.details = reasons.join(' | ') + elapsedMsg;
 
     console.log(`\n${RED}${BOLD}======================================================================${RESET}`);
-    console.log(`${RED}${BOLD}🚨🚨 [ALERTA: REGRESSÃO NO SERVIDOR ${serverKey} (${SERVERS[serverKey]?.role})!] 🚨🚨${RESET}`);
+    console.log(`${RED}${BOLD}🚨🚨 [ALERTA: REGRESSÃO CONFIRMADA NO SERVIDOR ${serverKey} (${SERVERS[serverKey]?.role})!] 🚨🚨${RESET}`);
+    if (elapsedMsg) {
+      console.log(`${RED}${BOLD}🚨🚨 ${elapsedMsg.trim()} 🚨🚨${RESET}`);
+    }
     if (isInversion) {
       console.log(`${RED}${BOLD}🚨🚨 [HIPÓTESE DETECTADA: INVERSÃO DE DADOS (DG/HG AVANÇOU, DT RETROCEDEU)!] 🚨🚨${RESET}`);
     }
-    console.log(`${RED}Critério Violado:${RESET} ${BOLD}${criterion}${RESET}`);
+    console.log(`${RED}Critério Violado:${RESET} ${BOLD}${currentMeta.criterion}${RESET}`);
     console.log(`${RED}Arquivo:${RESET}          ${BOLD}${filename}${RESET} (${source})`);
-    console.log(`${RED}Motivo:${RESET}           ${reasons.join(' | ')}`);
+    console.log(`${RED}Motivo:${RESET}           ${currentMeta.details}`);
     console.log(`  Versão Anterior (Mais Nova): dg=${prev.dg} hg=${prev.hg} | idg=${prev.idg}`);
     console.log(`  Versão Recebida (Retrocedeu): dg=${dg} hg=${hg} | idg=${idg}`);
     console.log(`${RED}${BOLD}>> EVIDÊNCIA GRAVADA NO BANCO SQLITE E EM ARQUIVO RAW! <<${RESET}`);
     console.log(`${RED}${BOLD}======================================================================\n${RESET}`);
 
-    recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, true, currentMeta.details, criterion);
+    recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, true, currentMeta.details, currentMeta.criterion);
     serverStates[serverKey].set(relPath, currentMeta);
   } else {
     let progressionInfo = `Novo dg/hg: ${dg} ${hg} | idg: ${idg}`;
@@ -4727,12 +4888,12 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     currentMeta.status = 'PROGRESSAO_OK';
     currentMeta.criterion = 'OK';
     currentMeta.details = progressionInfo;
+    currentMeta.firstSeenAt = callTimeUnix || Date.now();
     serverStates[serverKey].set(relPath, currentMeta);
 
     recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'OK');
 
-    
-    // Rastreia SLA de Sincronização relativo à ORIGEM definida:
+    // Rastreia SLA de Sincronização relativo à ORIGEM e à 1ª detecção na CDN:
     const originServer = getOriginServer();
     const isOriginNode = originServer && (originServer.chave === serverKey);
 
@@ -4743,8 +4904,9 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
           targetHg: hg,
           targetDg: dg,
           targetGenTime: genTime,
-          originDetectedAt: Date.now(),
-          hmgDetectedAt: Date.now(),
+          originDetectedAt: callTimeUnix || Date.now(),
+          hmgDetectedAt: callTimeUnix || Date.now(),
+          firstSeenCdnAt: null,
           replicas: {},
           lastSyncSec: 0,
           isWaiting: false
@@ -4754,25 +4916,65 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
         tracker.targetHg = hg;
         tracker.targetDg = dg;
         tracker.targetGenTime = genTime;
-        tracker.originDetectedAt = Date.now();
-        tracker.hmgDetectedAt = Date.now();
+        tracker.originDetectedAt = callTimeUnix || Date.now();
+        tracker.hmgDetectedAt = callTimeUnix || Date.now();
+        tracker.firstSeenCdnAt = null;
         tracker.replicas = {};
         tracker.isWaiting = true;
       }
     } else if (!isOriginNode && genTime !== null) {
-      const tracker = fileSyncTracker.get(relPath);
-      if (tracker && tracker.targetGenTime && genTime >= tracker.targetGenTime) {
+      let tracker = fileSyncTracker.get(relPath);
+      if (!tracker) {
+        tracker = {
+          targetHg: hg,
+          targetDg: dg,
+          targetGenTime: genTime,
+          originDetectedAt: null,
+          hmgDetectedAt: null,
+          firstSeenCdnAt: callTimeUnix || Date.now(),
+          replicas: {},
+          lastSyncSec: 0,
+          isWaiting: false
+        };
+        fileSyncTracker.set(relPath, tracker);
+      }
+
+      // Se a réplica trouxer uma versão MAIS NOVA que o alvo registrado, avança o alvo
+      if (tracker.targetGenTime !== null && genTime > tracker.targetGenTime) {
+        tracker.targetHg = hg;
+        tracker.targetDg = dg;
+        tracker.targetGenTime = genTime;
+        tracker.firstSeenCdnAt = callTimeUnix || Date.now();
+      }
+
+      // Verifica se a versão entregue por este nó é a versão alvo (ou mais recente)
+      const isTargetOrNewer = (tracker.targetGenTime === null) ||
+        (genTime >= tracker.targetGenTime) ||
+        (tracker.targetDg === dg && tracker.targetHg === hg);
+
+      // IMPORTANTE: Só marca o timestamp de primeira detecção na CDN (firstSeenCdnAt)
+      // e registra a conclusão de sincronização da réplica quando a réplica EFETIVAMENTE
+      // entregar a versão nova/alvo, NUNCA enquanto ela ainda estiver servindo a versão antiga!
+      if (isTargetOrNewer) {
+        if (!tracker.firstSeenCdnAt) {
+          tracker.firstSeenCdnAt = callTimeUnix || Date.now();
+        }
         if (!tracker.replicas) tracker.replicas = {};
         if (!tracker.replicas[serverKey]) {
-          const syncSec = tracker.originDetectedAt ? Math.max(0, Math.round((Date.now() - tracker.originDetectedAt) / 1000)) : 0;
+          const syncSec = tracker.originDetectedAt ? Math.max(0, Math.round(((callTimeUnix || Date.now()) - tracker.originDetectedAt) / 1000)) : 0;
           tracker.replicas[serverKey] = {
-            syncedAt: Date.now(),
+            firstSeenAt: callTimeUnix || Date.now(),
+            syncedAt: callTimeUnix || Date.now(),
             syncSec,
             isWaiting: false
           };
           tracker.lastSyncSec = syncSec;
           tracker.isWaiting = false;
           console.log(`   ${CYAN}⚡ [SLA SYNC DG/HG CONCLUÍDO]${RESET} ${filename}: Sincronizou no nó ${serverKey} em ${BOLD}${formatMinSec(syncSec)}${RESET}!`);
+        } else {
+          if (!tracker.replicas[serverKey].firstSeenAt) {
+            tracker.replicas[serverKey].firstSeenAt = callTimeUnix || Date.now();
+          }
         }
       }
     }
@@ -4933,16 +5135,16 @@ function httpRequestWithIp(urlStr) {
   });
 }
 
+const inFlightOriginFiles = new Set();
+const inFlightReplicaFiles = new Set();
 const inFlightPollFiles = new Set();
 
-async function pollFile(relPath) {
-  if (inFlightPollFiles.has(relPath)) return;
-  inFlightPollFiles.add(relPath);
+async function pollFileForServers(relPath, targetServers, inFlightSet) {
+  if (inFlightSet.has(relPath)) return;
+  inFlightSet.add(relPath);
   try {
     const cacheBust = `?nocache=${Date.now()}`;
-    const activeServers = getActiveServers();
-
-    for (const srv of activeServers) {
+    for (const srv of targetServers) {
       const fullUrl = srv.baseUrl + relPath + cacheBust;
       try {
         const resp = await httpRequestWithIp(fullUrl);
@@ -4961,23 +5163,96 @@ async function pollFile(relPath) {
       } catch {}
     }
   } finally {
-    inFlightPollFiles.delete(relPath);
+    inFlightSet.delete(relPath);
   }
 }
 
-async function runWorkerPool(filesArray, concurrency = 15) {
+async function runOriginWorkerPool(filesArray, concurrency = 15) {
+  const origin = getOriginServer();
+  if (!origin || !origin.ativo) return;
   const queue = [...filesArray];
   const workers = Array.from({ length: concurrency }, async () => {
     while (queue.length > 0) {
       const relPath = queue.shift();
       if (relPath) {
         try {
-          await pollFile(relPath);
+          await pollFileForServers(relPath, [origin], inFlightOriginFiles);
         } catch {}
       }
     }
   });
   await Promise.all(workers);
+}
+
+async function runReplicaWorkerPool(filesArray, concurrency = 15) {
+  const replicas = getReplicaServers();
+  if (!replicas || replicas.length === 0) return;
+  const queue = [...filesArray];
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (queue.length > 0) {
+      const relPath = queue.shift();
+      if (relPath) {
+        try {
+          await pollFileForServers(relPath, replicas, inFlightReplicaFiles);
+        } catch {}
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+// Retrocompatibilidade para chamadas genéricas
+async function runWorkerPool(filesArray, concurrency = 15) {
+  await Promise.all([
+    runOriginWorkerPool(filesArray, concurrency),
+    runReplicaWorkerPool(filesArray, concurrency)
+  ]);
+}
+
+// Schedulers independentes com timers parametrizáveis
+let originTimerId = null;
+let replicaTimerId = null;
+let isOriginPollRunning = false;
+let isReplicaPollRunning = false;
+
+function scheduleOriginPolling() {
+  if (originTimerId) clearTimeout(originTimerId);
+  const intervalSec = Math.max(1, getConfig('intervalo_matriz_segundos', 10));
+  const intervalMs = intervalSec * 1000;
+  originTimerId = setTimeout(async () => {
+    if (!isOriginPollRunning) {
+      isOriginPollRunning = true;
+      try {
+        const list = Array.from(trackedFiles);
+        await runOriginWorkerPool(list, 15);
+      } catch (err) {
+        console.error('[POLL-MATRIZ] Erro no ciclo de polling:', err);
+      } finally {
+        isOriginPollRunning = false;
+      }
+    }
+    scheduleOriginPolling();
+  }, intervalMs);
+}
+
+function scheduleReplicaPolling() {
+  if (replicaTimerId) clearTimeout(replicaTimerId);
+  const intervalSec = Math.max(1, getConfig('intervalo_replicas_segundos', 10));
+  const intervalMs = intervalSec * 1000;
+  replicaTimerId = setTimeout(async () => {
+    if (!isReplicaPollRunning) {
+      isReplicaPollRunning = true;
+      try {
+        const list = Array.from(trackedFiles);
+        await runReplicaWorkerPool(list, 15);
+      } catch (err) {
+        console.error('[POLL-REPLICAS] Erro no ciclo de polling:', err);
+      } finally {
+        isReplicaPollRunning = false;
+      }
+    }
+    scheduleReplicaPolling();
+  }, intervalMs);
 }
 
 async function attachTabObserver(tab) {
@@ -5503,6 +5778,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <button onclick="openRodadasModal()" class="btn-copy" style="padding: 1px 7px; font-size: 0.72rem; height: 22px; display: inline-flex; align-items: center; margin-left: 2px;" title="Gerenciar Rodadas e Checkpoints">⚙️ Gerenciar</button>
         <button onclick="quickNewRodada()" class="btn" style="background: #10b981; padding: 0 8px; font-size: 0.72rem; height: 22px; line-height: 1; border-radius: 4px; display: inline-flex; align-items: center; margin-left: 2px;" title="Iniciar nova rodada zerada imediatamente">➕ Nova</button>
       </div>
+
+      <!-- SELETOR PARÂMETROS AKAMAI / POLLING (30px) -->
+      <div style="height: 30px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); padding: 0 10px; border-radius: 8px;">
+        <span style="font-size: 0.76rem; color: #34d399; font-weight: 700;">⏱️ Polling & Tolerância:</span>
+        <span id="headerParamsSummary" style="font-size: 0.80rem; font-weight: 600; color: #f8fafc;">Matriz: 10s | Réplicas: 10s | Cache Akamai: 60s | SLA TSE: 90s</span>
+        <button onclick="openConfigModal()" class="btn-copy" style="padding: 1px 7px; font-size: 0.72rem; height: 22px; display: inline-flex; align-items: center; margin-left: 2px;" title="Configurar tempos de busca (Matriz/Réplicas) e tolerância Akamai">⚙️ Ajustar</button>
+      </div>
     </div>
   </header>
 
@@ -5537,7 +5819,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     <!-- Card 4: Cache (SLAs Acumulados - Denso) -->
     <div class="stat-card stat-card-cache" style="padding: 10px 14px; border-left: 3px solid var(--accent-yellow); display: flex; flex-direction: column; justify-content: space-between;">
-      <div class="stat-label" style="font-size: 0.70rem; margin-bottom: 4px;">Cache (SLAs Acumulados)</div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 8px;">
+        <span class="stat-label" style="font-size: 0.70rem; margin: 0; white-space: nowrap;">Cache (SLAs Acumulados)</span>
+        <div id="cardSlaPills" style="display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto;">
+          <button type="button" class="btn-sla-pill active" onclick="setCardSlaMode('CONSOLIDADO')" style="background: var(--accent-yellow); color: #000; font-weight: 700; border: none; padding: 1px 6px; border-radius: 4px; font-size: 0.62rem; cursor: pointer;">Consolidado</button>
+        </div>
+      </div>
       <div style="display: flex; justify-content: space-between; gap: 6px; align-items: baseline; flex-wrap: nowrap;">
         <div>
           <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Quantidade de arquivos com cache desatualizado neste exato instante">Atrasados</div>
@@ -5563,6 +5850,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Tempo máximo de sincronização (100% dos arquivos)">P100</div>
           <div id="cacheP100" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #b91c1c;">0m 00s</div>
         </div>
+      </div>
+      <div id="cardSlaNodesSummary" style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.08); font-size: 0.63rem; color: var(--text-muted); display: flex; gap: 8px; overflow-x: auto; white-space: nowrap;">
       </div>
     </div>
 
@@ -6000,6 +6289,83 @@ function setElText(id, val) {
       }
     }
 
+    let currentCardSlaMode = 'CONSOLIDADO';
+    let lastFilteredRows = null;
+
+    function setCardSlaMode(mode) {
+      currentCardSlaMode = mode;
+      if (latestApiData) {
+        renderHeaderStats(latestApiData, lastFilteredRows);
+      }
+    }
+
+    function renderCardSlaPillsAndStats(data, filteredRows) {
+      const pillsContainer = document.getElementById('cardSlaPills');
+      const nodesSummary = document.getElementById('cardSlaNodesSummary');
+      const replicaStats = data.replicaSlaStats || {};
+      const globalStats = data.todaySlaStats || { avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0, totalEvents: 0 };
+      const replicaKeys = Object.keys(replicaStats);
+
+      // Renderiza os botões pills para comutar Consolidado vs Nós Individuais
+      if (pillsContainer) {
+        const isCons = (currentCardSlaMode === 'CONSOLIDADO');
+        let pillsHtml = '<button type="button" class="btn-sla-pill ' + (isCons ? 'active' : '') + '" data-mode="CONSOLIDADO" onclick="setCardSlaMode(this.dataset.mode)" style="background:' + (isCons ? 'var(--accent-yellow)' : '#1e293b') + '; color:' + (isCons ? '#000' : '#94a3b8') + '; font-weight:700; border:1px solid ' + (isCons ? 'var(--accent-yellow)' : '#475569') + '; padding:1px 6px; border-radius:4px; font-size:0.62rem; cursor:pointer;" title="Métricas consolidadas de todos os nós de réplica">Consolidado</button>';
+        for (const rKey of replicaKeys) {
+          const isActive = (currentCardSlaMode === rKey);
+          pillsHtml += '<button type="button" class="btn-sla-pill ' + (isActive ? 'active' : '') + '" data-mode="' + rKey + '" onclick="setCardSlaMode(this.dataset.mode)" style="background:' + (isActive ? '#38bdf8' : '#1e293b') + '; color:' + (isActive ? '#000' : '#94a3b8') + '; font-weight:700; border:1px solid ' + (isActive ? '#38bdf8' : '#475569') + '; padding:1px 6px; border-radius:4px; font-size:0.62rem; cursor:pointer;" title="SLA individual do nó ' + rKey + '">' + rKey + '</button>';
+        }
+        pillsContainer.innerHTML = pillsHtml;
+      }
+
+      // Renderiza a barra compacta de resumo com todos os nós individuais simultaneamente
+      if (nodesSummary) {
+        if (replicaKeys.length > 0) {
+          let summaryHtml = '<span style="color:#64748b; font-weight:600;">Nós:</span> ';
+          summaryHtml += replicaKeys.map(function(k) {
+            const st = replicaStats[k];
+            const isCur = (currentCardSlaMode === k);
+            return '<span data-mode="' + k + '" onclick="setCardSlaMode(this.dataset.mode)" style="cursor:pointer; color:' + (isCur ? '#38bdf8' : '#94a3b8') + '; text-decoration:' + (isCur ? 'underline' : 'none') + ';" title="Clique para focar no nó ' + k + '">' +
+              '<strong style="color:' + (isCur ? '#fff' : '#cbd5e1') + ';">' + k + ':</strong> ' + formatMinSec(st.avgSec) + ' (P95: ' + formatMinSec(st.p95Sec) + ')' +
+            '</span>';
+          }).join(' <span style="color:#475569;">|</span> ');
+          nodesSummary.innerHTML = summaryHtml;
+          nodesSummary.style.display = 'flex';
+        } else {
+          nodesSummary.style.display = 'none';
+        }
+      }
+
+      // Se houver filtro ativo na tela e estiver no modo consolidado
+      const syncMap = data.todaySyncByFile || {};
+      let slas = null;
+      if (currentCardSlaMode === 'CONSOLIDADO' && filteredRows && filteredRows.length < data.comparison.length) {
+        slas = [];
+        for (const row of filteredRows) {
+          const fileSlas = syncMap[row.relPath];
+          if (fileSlas && fileSlas.length) {
+            slas.push(...fileSlas);
+          }
+        }
+        slas.sort((a, b) => a - b);
+      }
+
+      if (slas && slas.length > 0) {
+        const avgSec = Math.round(slas.reduce((a, b) => a + b, 0) / slas.length);
+        setElText('cacheAvg', formatMinSec(avgSec));
+        setElText('cacheP90', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.90))]));
+        setElText('cacheP95', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.95))]));
+        setElText('cacheP99', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.99))]));
+        setElText('cacheP100', formatMinSec(slas[slas.length - 1]));
+      } else {
+        const targetStats = (currentCardSlaMode === 'CONSOLIDADO' || !replicaStats[currentCardSlaMode]) ? globalStats : replicaStats[currentCardSlaMode];
+        setElText('cacheAvg', formatMinSec(targetStats.avgSec));
+        setElText('cacheP90', formatMinSec(targetStats.p90Sec));
+        setElText('cacheP95', formatMinSec(targetStats.p95Sec));
+        setElText('cacheP99', formatMinSec(targetStats.p99Sec));
+        setElText('cacheP100', formatMinSec(targetStats.p100Sec));
+      }
+    }
+
     function renderHeaderStats(data, filteredRows) {
       if (data.activeRodada) renderRodadasHeader(data.activeRodada);
       if (data.servers) {
@@ -6048,57 +6414,28 @@ function setElText(id, val) {
         if (kpiHmgHeaderEl) kpiHmgHeaderEl.textContent = 'Sem Header (Apache)';
       }
 
-      // 1. Quantidade de arquivos com cache atrasado AGORA
+      lastFilteredRows = filteredRows;
+
+      // 1. Quantidade de arquivos com cache atrasado AGORA (Consolidado ou Nó Específico)
       const list = filteredRows || data.comparison;
       let desyncCount = 0;
       for (const row of list) {
-        if (row.comparison.status === 'CACHE_ATRASADO') desyncCount++;
+        if (currentCardSlaMode === 'CONSOLIDADO') {
+          if (row.comparison.status === 'CACHE_ATRASADO') desyncCount++;
+        } else {
+          const srvState = row.allServers ? row.allServers[currentCardSlaMode] : null;
+          const origState = row.origin || row.hmg;
+          if (srvState && srvState.meta && origState && origState.genTime !== null && srvState.meta.genTime !== null) {
+            if (origState.genTime > srvState.meta.genTime) desyncCount++;
+          } else if (origState && (!srvState || !srvState.meta)) {
+            desyncCount++;
+          }
+        }
       }
       document.getElementById('countDesync').textContent = desyncCount;
 
-      // 2. SLAs de todas as atualizações desde 00h (não apenas as últimas)
-      const syncMap = data.todaySyncByFile || {};
-      let slas = [];
-      if (filteredRows && filteredRows.length < data.comparison.length) {
-        for (const row of filteredRows) {
-          const fileSlas = syncMap[row.relPath];
-          if (fileSlas && fileSlas.length) {
-            slas.push(...fileSlas);
-          }
-        }
-        slas.sort((a, b) => a - b);
-      } else if (data.todaySlaStats) {
-        // Estatísticas pré-calculadas de todas as sincronizações desde 00h
-        setElText('cacheAvg', formatMinSec(data.todaySlaStats.avgSec));
-        setElText('cacheP90', formatMinSec(data.todaySlaStats.p90Sec));
-        setElText('cacheP95', formatMinSec(data.todaySlaStats.p95Sec));
-        setElText('cacheP99', formatMinSec(data.todaySlaStats.p99Sec));
-        setElText('cacheP100', formatMinSec(data.todaySlaStats.p100Sec));
-        slas = null;
-      }
-
-      if (slas && slas.length > 0) {
-        const avgSec = Math.round(slas.reduce((a, b) => a + b, 0) / slas.length);
-        setElText('cacheAvg', formatMinSec(avgSec));
-
-        const idx90 = Math.min(slas.length - 1, Math.floor(slas.length * 0.90));
-        setElText('cacheP90', formatMinSec(slas[idx90]));
-
-        const idx95 = Math.min(slas.length - 1, Math.floor(slas.length * 0.95));
-        setElText('cacheP95', formatMinSec(slas[idx95]));
-
-        const idx99 = Math.min(slas.length - 1, Math.floor(slas.length * 0.99));
-        setElText('cacheP99', formatMinSec(slas[idx99]));
-
-        const idx100 = slas.length - 1;
-        setElText('cacheP100', formatMinSec(slas[idx100]));
-      } else if (slas !== null) {
-        setElText('cacheAvg', '0m 00s');
-        setElText('cacheP90', '0m 00s');
-        setElText('cacheP95', '0m 00s');
-        setElText('cacheP99', '0m 00s');
-        setElText('cacheP100', '0m 00s');
-      }
+      // 2. SLAs Acumulados (Consolidado vs Individual)
+      renderCardSlaPillsAndStats(data, filteredRows);
 
       const badge = document.getElementById('statusBadge');
       const badgeText = document.getElementById('statusText');
@@ -6822,7 +7159,17 @@ function setElText(id, val) {
       loadData();
     }
 
-    async function testFormServer() {
+    function applySuggestedUrl(url) {
+      const inp = document.getElementById('srvUrlInput');
+      if (inp && url) {
+        inp.value = url;
+        testServerUrl();
+      }
+    }
+
+    const testFormServer = function() { return testServerUrl(); };
+
+    async function testServerUrl() {
       const url = document.getElementById('srvUrlInput').value.trim();
       const feedback = document.getElementById('srvTestFeedback');
       if (!url) {
@@ -6841,9 +7188,18 @@ function setElText(id, val) {
         });
         const res = await resp.json();
         if (res.ok) {
-          feedback.innerHTML = \`<span style="color:#10b981;">✓ HTTP \${res.statusCode}</span> (\${res.timeMs}ms) | IP: \${res.serverIp || 'N/A'} | Server: \${res.server || '-'}\`;
+          feedback.innerHTML = '<span style="color:#10b981;">✓ HTTP ' + res.statusCode + '</span> (' + res.timeMs + 'ms) | IP: ' + (res.serverIp || 'N/A') + ' | Server: ' + (res.server || '-');
         } else {
-          feedback.innerHTML = \`<span style="color:#f87171;">✗ Falha: HTTP \${res.statusCode || '0'}</span> (\${res.error || 'Sem resposta'})\`;
+          let extraMsg = '';
+          if (res.suggestedBaseUrl) {
+            extraMsg = '<div style="margin-top:6px; background:rgba(245,158,11,0.15); border:1px solid #f59e0b; padding:6px 8px; border-radius:5px; color:#fde68a; font-size:0.75rem;">' +
+              '⚠️ <strong>URL do Front-end Web detectada!</strong><br>' +
+              'Você informou a URL da tela web (/app/index.html). Os arquivos de dados (.json) deste ambiente são servidos em:<br>' +
+              '<code style="color:#38bdf8; font-weight:bold;">' + res.suggestedBaseUrl + '</code><br>' +
+              '<button type="button" class="btn-copy" data-suggested="' + res.suggestedBaseUrl + '" onclick="applySuggestedUrl(this.dataset.suggested)" style="margin-top:5px; padding:3px 8px; background:#0284c7; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:600;">👉 Aplicar URL de Dados Recomendada</button>' +
+            '</div>';
+          }
+          feedback.innerHTML = '<span style="color:#f87171;">✗ Falha: HTTP ' + (res.statusCode || '0') + '</span> (' + (res.error || 'Sem resposta') + ')' + extraMsg;
         }
       } catch (err) {
         feedback.textContent = 'Erro ao disparar teste: ' + err.message;
@@ -7178,6 +7534,70 @@ function setElText(id, val) {
         container.appendChild(item);
       }
     }
+
+    async function openConfigModal() {
+      try {
+        var res = await fetch('/api/configuracoes').then(function(r) { return r.json(); });
+        if (res.ok && res.config) {
+          document.getElementById('cfgIntervaloMatriz').value = res.config.intervalo_matriz_segundos || 10;
+          document.getElementById('cfgIntervaloReplicas').value = res.config.intervalo_replicas_segundos || 10;
+          if (document.getElementById('cfgToleranciaCacheAkamai')) {
+            document.getElementById('cfgToleranciaCacheAkamai').value = res.config.tolerancia_cache_akamai_segundos || 60;
+          }
+          if (document.getElementById('cfgSlaPropagacaoTse')) {
+            document.getElementById('cfgSlaPropagacaoTse').value = res.config.sla_propagacao_tse_segundos || 90;
+          }
+          updateParamsSummary(res.config);
+        }
+      } catch(e) {}
+      document.getElementById('modalConfig').style.display = 'flex';
+    }
+
+    function closeConfigModal() {
+      document.getElementById('modalConfig').style.display = 'none';
+    }
+
+    async function saveConfigParams() {
+      var intMatriz = parseInt(document.getElementById('cfgIntervaloMatriz').value, 10);
+      var intReplicas = parseInt(document.getElementById('cfgIntervaloReplicas').value, 10);
+      var tolCache = parseInt(document.getElementById('cfgToleranciaCacheAkamai') ? document.getElementById('cfgToleranciaCacheAkamai').value : 60, 10);
+      var slaTse = parseInt(document.getElementById('cfgSlaPropagacaoTse') ? document.getElementById('cfgSlaPropagacaoTse').value : 90, 10);
+
+      try {
+        var res = await fetch('/api/configuracoes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            intervalo_matriz_segundos: intMatriz,
+            intervalo_replicas_segundos: intReplicas,
+            tolerancia_cache_akamai_segundos: tolCache,
+            sla_propagacao_tse_segundos: slaTse
+          })
+        }).then(function(r) { return r.json(); });
+
+        if (res.ok) {
+          updateParamsSummary(res.config);
+          closeConfigModal();
+          alert('Parâmetros de polling, convergência Akamai e SLA TSE atualizados com sucesso!');
+        } else {
+          alert('Erro ao salvar parâmetros: ' + (res.message || 'Erro desconhecido'));
+        }
+      } catch (err) {
+        alert('Erro de conexão ao salvar parâmetros: ' + err.message);
+      }
+    }
+
+    function updateParamsSummary(cfg) {
+      var el = document.getElementById('headerParamsSummary');
+      if (el && cfg) {
+        var tolCache = cfg.tolerancia_cache_akamai_segundos || cfg.tolerancia_propagacao_segundos || 60;
+        var slaTse = cfg.sla_propagacao_tse_segundos || 90;
+        el.innerText = 'Matriz: ' + cfg.intervalo_matriz_segundos + 's | Réplicas: ' + cfg.intervalo_replicas_segundos + 's | Cache Akamai: ' + tolCache + 's | SLA TSE: ' + slaTse + 's';
+      }
+    }
+
+    // Carrega parâmetros na inicialização do dashboard
+    fetch('/api/configuracoes').then(function(r) { return r.json(); }).then(function(d) { if (d.ok && d.config) updateParamsSummary(d.config); }).catch(function() {});
 
     function openRodadasModal() {
       document.getElementById('rodadasModal').style.display = 'flex';
@@ -7673,6 +8093,7 @@ function setElText(id, val) {
         const res = await fetch('/api/regressoes?limit=500');
         const data = await res.json();
         allRegressoesData = data.regressoes || [];
+        window.currentActiveRodadaId = (data.rodada && data.rodada.id) ? data.rodada.id : null;
         
         document.getElementById('regModalRodadaNome').textContent = (data.rodada && data.rodada.nome) ? data.rodada.nome : 'Rodada Atual';
         document.getElementById('regModalTotalCount').textContent = data.total !== undefined ? data.total : allRegressoesData.length;
@@ -7736,6 +8157,21 @@ function setElText(id, val) {
       } catch(e) {
         container.innerHTML = '<div style="text-align:center; padding:40px; color:#ef4444;">Erro na busca remota: ' + e.message + '</div>';
       }
+    }
+
+    function downloadOfflineDossieFromDashboard() {
+      const rodadaId = window.currentActiveRodadaId;
+      const searchInput = document.getElementById('regSearchInput');
+      const serverInput = document.getElementById('regFilterServer');
+      const critInput = document.getElementById('regFilterCriterion');
+      let url = '/export/dossie-html';
+      const params = [];
+      if (rodadaId) params.push('rodadaId=' + encodeURIComponent(rodadaId));
+      if (searchInput && searchInput.value.trim()) params.push('q=' + encodeURIComponent(searchInput.value.trim()));
+      if (serverInput && serverInput.value.trim()) params.push('servidor=' + encodeURIComponent(serverInput.value.trim()));
+      if (critInput && critInput.value.trim()) params.push('criterio=' + encodeURIComponent(critInput.value.trim()));
+      if (params.length > 0) url += '?' + params.join('&');
+      window.location.href = url;
     }
 
     function decodeAkamaiGrnClient(grn) {
@@ -8976,6 +9412,83 @@ function setElText(id, val) {
     </div>
   </div>
 
+  <!-- MODAL DE CONFIGURAÇÃO DE PARÂMETROS (TEMPOS DE BUSCA E TOLERÂNCIA AKAMAI) -->
+  <div id="modalConfig" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
+    <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:92%; max-width:620px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); color:#f8fafc; max-height:90vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:12px;">
+        <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+          ⏱️ Parâmetros de Polling e Tolerância Akamai CDN
+        </h3>
+        <button onclick="closeConfigModal()" style="background:transparent; border:none; font-size:1.2rem; color:#94a3b8; cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:4px 0 16px 0;">
+        <div style="background:rgba(56,189,248,0.1); border-left:3px solid #38bdf8; padding:10px 14px; border-radius:6px; margin-bottom:18px; font-size:0.82rem; color:#cbd5e1; line-height:1.45;">
+          Ajuste as frequências de busca independente entre a <strong>Matriz (Origem)</strong> e as <strong>Réplicas (Cache/CDN)</strong>, e defina a janela de tolerância para confirmação de falha de integridade solicitada pela Akamai.
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div>
+            <label style="display:block; font-size:0.82rem; font-weight:700; color:#f8fafc; margin-bottom:4px;">
+              1) Tempo de Busca no Servidor Matriz (Origem / HMG)
+            </label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input id="cfgIntervaloMatriz" type="number" min="1" max="300" step="1" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="10">
+              <span style="font-size:0.84rem; color:#94a3b8;">segundos (Padrão: 10s)</span>
+            </div>
+            <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
+              Frequência com que o monitor consulta o nó de origem para detectar publicações imediatas do TDTot.
+            </p>
+          </div>
+
+          <div>
+            <label style="display:block; font-size:0.82rem; font-weight:700; color:#f8fafc; margin-bottom:4px;">
+              2) Tempo de Busca nos Servidores Replicados (Cache / SIM / Akamai)
+            </label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input id="cfgIntervaloReplicas" type="number" min="1" max="300" step="1" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="10">
+              <span style="font-size:0.84rem; color:#94a3b8;">segundos (Padrão: 10s)</span>
+            </div>
+            <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
+              Frequência com que o monitor consulta as réplicas/bordas para medição contínua de latência e convergência de cache.
+            </p>
+          </div>
+
+          <div>
+            <label style="display:block; font-size:0.82rem; font-weight:700; color:#38bdf8; margin-bottom:4px;">
+              3) Tolerância para Regressão de Cache (Critério Akamai)
+            </label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input id="cfgToleranciaCacheAkamai" type="number" min="5" max="300" step="5" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="60">
+              <span style="font-size:0.84rem; color:#94a3b8;">segundos (Padrão: 60s)</span>
+              <input id="cfgToleranciaPropagacao" type="hidden" value="60">
+            </div>
+            <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
+              Janela máxima de convergência de borda da CDN (1 ciclo de renovação de TTL de 60s). Cronometrado a partir do momento em que o primeiro nó da CDN entrega a nova versão. Se um nó entregar versão antiga após 60s, é confirmada falha de integridade / regressão de cache (Ghost Cache).
+            </p>
+          </div>
+
+          <div>
+            <label style="display:block; font-size:0.82rem; font-weight:700; color:#34d399; margin-bottom:4px;">
+              4) SLA Máximo de Propagação (Critério TSE)
+            </label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input id="cfgSlaPropagacaoTse" type="number" min="10" max="600" step="5" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="90">
+              <span style="font-size:0.84rem; color:#94a3b8;">segundos (Padrão: 90s)</span>
+            </div>
+            <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
+              SLA de ponta a ponta do TSE para distribuição total dos arquivos totalizados a partir da publicação na Origem (HMG). Se a CDN levar mais tempo que este limite para buscar e replicar o arquivo da Origem, o descumprimento de SLA é registrado.
+            </p>
+          </div>
+        </div>
+
+        <div style="margin-top:24px; display:flex; justify-content:flex-end; gap:10px;">
+          <button onclick="closeConfigModal()" class="btn btn-outline" style="padding:6px 14px; font-size:0.82rem; cursor:pointer;">Cancelar</button>
+          <button onclick="saveConfigParams()" class="btn" style="background:#10b981; color:white; font-weight:600; padding:6px 18px; font-size:0.82rem; border-radius:6px; cursor:pointer; border:none;">💾 Salvar Parâmetros</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL DE GERENCIAMENTO DE RODADAS -->
   <div id="rodadasModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(3px);">
     <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:92%; max-width:620px; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); color:#f8fafc; max-height:90vh; overflow-y:auto;">
@@ -9142,7 +9655,7 @@ function setElText(id, val) {
         <div style="display:flex; align-items:center; gap:8px;">
           <button onclick="loadRegressoesData()" class="btn-copy" style="padding:5px 12px; font-size:0.75rem;" title="Recarregar dados">🔄 Atualizar</button>
           <a href="/download/csv-regressoes" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none;" title="Baixar histórico CSV">📊 Baixar CSV</a>
-          <a href="/export/dossie-html" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#0284c7; color:#fff; font-weight:600;" title="Exportar Dossiê HTML Completo e Autônomo Offline (compartilhável)">📥 Exportar HTML Offline</a>
+          <a href="/export/dossie-html" onclick="event.preventDefault(); downloadOfflineDossieFromDashboard();" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#0284c7; color:#fff; font-weight:600;" title="Exportar Dossiê HTML Completo e Autônomo Offline (compartilhável)">📥 Exportar HTML Offline</a>
           <a href="/report" target="_blank" class="btn-copy" style="padding:5px 12px; font-size:0.75rem; text-decoration:none; background:#dc2626; color:#fff;" title="Dossiê HTML para impressão">📄 Dossiê HTML</a>
           <button onclick="closeRegressoesModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.6rem; cursor:pointer; line-height:1; margin-left:8px;">&times;</button>
         </div>
@@ -9428,16 +9941,17 @@ function getTodaySyncData() {
       WITH hmg_first AS (
         SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
         FROM leituras
-        WHERE (papel_servidor = 'ORIGEM' OR servidor = 'HMG') AND timestamp_unix >= ?
+        WHERE (papel_servidor LIKE '%ORIGEM%' OR papel_servidor LIKE '%FONTE%' OR servidor LIKE 'HMG%') AND timestamp_unix >= ?
         GROUP BY arquivo, dg, hg
       ),
       sim_first AS (
-        SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
+        SELECT servidor, arquivo, dg, hg, MIN(timestamp_unix) as s_first
         FROM leituras
-        WHERE (papel_servidor = 'REPLICA' OR servidor = 'SIM') AND timestamp_unix >= ?
-        GROUP BY arquivo, dg, hg
+        WHERE NOT (papel_servidor LIKE '%ORIGEM%' OR papel_servidor LIKE '%FONTE%' OR servidor LIKE 'HMG%') AND timestamp_unix >= ?
+        GROUP BY servidor, arquivo, dg, hg
       )
       SELECT 
+        s.servidor,
         h.arquivo,
         CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
       FROM hmg_first h
@@ -9445,24 +9959,48 @@ function getTodaySyncData() {
     `).all(rodadaStartUnix, rodadaStartUnix);
 
     const todaySyncByFile = {};
+    const serverSyncTimes = {};
     for (const row of syncRows) {
       if (!todaySyncByFile[row.arquivo]) todaySyncByFile[row.arquivo] = [];
       todaySyncByFile[row.arquivo].push(row.sync_sec);
+      const srv = row.servidor || 'SIM';
+      if (!serverSyncTimes[srv]) serverSyncTimes[srv] = [];
+      serverSyncTimes[srv].push(row.sync_sec);
     }
 
-    const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
-    const globalTodayStats = {
-      totalEvents: allTimes.length,
-      avgSec: allTimes.length ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length) : 0,
-      p90Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.90)] : 0,
-      p95Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.95)] : 0,
-      p99Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.99)] : 0,
-      p100Sec: allTimes.length ? allTimes[allTimes.length - 1] : 0
+    const calcStats = (times) => {
+      const sorted = [...times].sort((a, b) => a - b);
+      return {
+        totalEvents: sorted.length,
+        avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
+        p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
+        p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
+        p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
+        p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
+      };
     };
 
-    cachedTodaySync = { todaySyncByFile, globalTodayStats };
+    const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+    const globalTodayStats = calcStats(allTimes);
+
+    const replicaSlaStats = {};
+    for (const srv of Object.keys(serverSyncTimes)) {
+      replicaSlaStats[srv] = calcStats(serverSyncTimes[srv]);
+    }
+    const replicas = getReplicaServers();
+    for (const rep of replicas) {
+      if (!replicaSlaStats[rep.chave]) {
+        replicaSlaStats[rep.chave] = { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+      }
+    }
+
+    cachedTodaySync = { todaySyncByFile, globalTodayStats, replicaSlaStats };
   } catch(e) {
-    cachedTodaySync = { todaySyncByFile: {}, globalTodayStats: { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 } };
+    cachedTodaySync = {
+      todaySyncByFile: {},
+      globalTodayStats: { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 },
+      replicaSlaStats: {}
+    };
   }
   lastTodaySyncFetch = now;
   return cachedTodaySync;
@@ -9520,16 +10058,17 @@ function buildHistoricalComparisonPayload(rodadaId) {
     WITH hmg_first AS (
       SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
       FROM leituras
-      WHERE (papel_servidor = 'ORIGEM' OR servidor = 'HMG') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      WHERE (papel_servidor LIKE '%ORIGEM%' OR papel_servidor LIKE '%FONTE%' OR servidor LIKE 'HMG%') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
       GROUP BY arquivo, dg, hg
     ),
     sim_first AS (
-      SELECT arquivo, dg, hg, MIN(timestamp_unix) as s_first
+      SELECT servidor, arquivo, dg, hg, MIN(timestamp_unix) as s_first
       FROM leituras
-      WHERE (papel_servidor = 'REPLICA' OR servidor = 'SIM') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
-      GROUP BY arquivo, dg, hg
+      WHERE NOT (papel_servidor LIKE '%ORIGEM%' OR papel_servidor LIKE '%FONTE%' OR servidor LIKE 'HMG%') AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+      GROUP BY servidor, arquivo, dg, hg
     )
     SELECT 
+      s.servidor,
       h.arquivo,
       CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
     FROM hmg_first h
@@ -9537,19 +10076,31 @@ function buildHistoricalComparisonPayload(rodadaId) {
   `;
   const syncRows = db.prepare(sqlSla).all(rStartUnix, rEndUnix, rEndUnix, rStartUnix, rEndUnix, rEndUnix);
   const todaySyncByFile = {};
+  const serverSyncTimes = {};
   for (const row of syncRows) {
     if (!todaySyncByFile[row.arquivo]) todaySyncByFile[row.arquivo] = [];
     todaySyncByFile[row.arquivo].push(row.sync_sec);
+    const srv = row.servidor || 'SIM';
+    if (!serverSyncTimes[srv]) serverSyncTimes[srv] = [];
+    serverSyncTimes[srv].push(row.sync_sec);
   }
-  const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
-  const todaySlaStats = {
-    totalEvents: allTimes.length,
-    avgSec: allTimes.length ? Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length) : 0,
-    p90Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.90)] : 0,
-    p95Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.95)] : 0,
-    p99Sec: allTimes.length ? allTimes[Math.floor(allTimes.length * 0.99)] : 0,
-    p100Sec: allTimes.length ? allTimes[allTimes.length - 1] : 0
+  const calcStats = (times) => {
+    const sorted = [...times].sort((a, b) => a - b);
+    return {
+      totalEvents: sorted.length,
+      avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
+      p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
+      p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
+      p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
+      p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
+    };
   };
+  const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+  const todaySlaStats = calcStats(allTimes);
+  const replicaSlaStats = {};
+  for (const srv of Object.keys(serverSyncTimes)) {
+    replicaSlaStats[srv] = calcStats(serverSyncTimes[srv]);
+  }
 
   const comparisonList = [];
   let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
@@ -9770,6 +10321,7 @@ function buildHistoricalComparisonPayload(rodadaId) {
     lastRegressionTime: lastRegRow ? lastRegRow.timestamp_iso : '-',
     todaySyncByFile,
     todaySlaStats,
+    replicaSlaStats,
     cacheStats,
     activeRodada: rFound,
     totalChecks: rows.length
@@ -9833,7 +10385,7 @@ function getComparisonPayload(rodadaId = null) {
     }
   } catch (e) {}
 
-  const { todaySyncByFile, globalTodayStats } = getTodaySyncData();
+  const { todaySyncByFile, globalTodayStats, replicaSlaStats } = getTodaySyncData();
 
   let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
   let cdnHits = 0, cdnTotal = 0;
@@ -9873,6 +10425,7 @@ function getComparisonPayload(rodadaId = null) {
     lastRegressionTime,
     todaySyncByFile,
     todaySlaStats: globalTodayStats,
+    replicaSlaStats,
     cacheStats,
     activeRodada: activeRodada,
     totalChecks: totalChecksCount
@@ -10169,7 +10722,10 @@ function startDashboardServer() {
     const url = new URL(req.url, `http://localhost:${DASHBOARD_PORT}`);
 
     if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/dashboard.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+      });
       res.end(DASHBOARD_HTML);
       return;
     }
@@ -10186,63 +10742,38 @@ function startDashboardServer() {
 
     if (url.pathname === '/export/dossie-html') {
       try {
-        const limitParam = url.searchParams.get('limit');
-        const limit = limitParam !== null ? parseInt(limitParam, 10) : 2000;
+        const rodadaParam = url.searchParams.get('rodadaId') || url.searchParams.get('rodada');
+        let targetRodada = null;
+        if (rodadaParam && rodadaParam !== 'all') {
+          targetRodada = db.prepare('SELECT * FROM rodadas WHERE id = ?').get(Number(rodadaParam));
+        } else if (rodadaParam === 'all') {
+          const firstR = db.prepare('SELECT inicio_iso FROM rodadas ORDER BY id ASC LIMIT 1').get();
+          targetRodada = {
+            id: 'Todas',
+            nome: 'Todas as Rodadas Registradas',
+            inicio_iso: firstR ? firstR.inicio_iso : '2026-09-01T00:00:00.000Z',
+            fim_iso: null
+          };
+        }
+        if (!targetRodada) {
+          targetRodada = getActiveRodada();
+        }
+        if (!targetRodada) {
+          targetRodada = db.prepare('SELECT * FROM rodadas ORDER BY id DESC LIMIT 1').get();
+        }
+
         const q = (url.searchParams.get('q') || '').trim();
-        const grn = (url.searchParams.get('grn') || '').trim();
         const servidor = (url.searchParams.get('servidor') || '').trim();
         const criterio = (url.searchParams.get('criterio') || '').trim();
-        const uf = (url.searchParams.get('uf') || '').trim();
-        const cargo = (url.searchParams.get('cargo') || '').trim();
-        const eleicao = (url.searchParams.get('eleicao') || '').trim();
 
-        const compPayload = getComparisonPayload();
-        const regsPayload = getEnrichedRegressions({
-          limit,
-          allRodada: true,
-          q,
-          grn,
-          servidor,
-          criterio,
-          uf,
-          cargo,
-          eleicao
-        });
+        const { generateOfflineForensicReportHtml } = require('./dossie_offline_generator.js');
+        const htmlContent = generateOfflineForensicReportHtml(db, targetRodada, { q, servidor, criterio });
+        const rodadaNum = targetRodada.id || (targetRodada.nome ? targetRodada.nome.replace(/\D+/g, '') : 1);
+        const filename = `relatorio_regressoes_rodada_${rodadaNum}.html`;
 
-        // Ensure all inversion cases are always bundled into standalone export
-        if (criterio !== 'INVERSAO_DG_DT_ST' && criterio !== 'INVERSAO_DG_DT' && !q && !grn) {
-          const invPayload = getEnrichedRegressions({
-            limit: 2000,
-            allRodada: true,
-            criterio: 'INVERSAO_DG_DT'
-          });
-          const existingIds = new Set(regsPayload.regressoes.map(r => r.id));
-          for (const inv of invPayload.regressoes) {
-            if (!existingIds.has(inv.id)) {
-              regsPayload.regressoes.push(inv);
-            }
-          }
-        }
-        const rodadasRows = db.prepare('SELECT * FROM rodadas ORDER BY id DESC').all();
-        const activeRodada = getActiveRodada();
-        
-        const standaloneBundle = {
-          exportedAt: new Date().toLocaleString('pt-BR'),
-          comparison: compPayload.comparison,
-          regressoes: regsPayload.regressoes,
-          rodadas: rodadasRows,
-          activeRodada: activeRodada,
-          cacheStats: compPayload.cacheStats,
-          todaySlaStats: compPayload.todaySlaStats,
-          lastRegressionTime: compPayload.lastRegressionTime,
-          regressionsTimeCount: regsPayload.total
-        };
-
-        const htmlContent = generateHtmlReport(standaloneBundle);
-        const dateStr = new Date().toISOString().slice(0, 10);
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
-          'Content-Disposition': `attachment; filename="dossie_forense_tdtot_${dateStr}.html"`,
+          'Content-Disposition': `attachment; filename="${filename}"`,
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         });
         res.end(htmlContent);
@@ -10252,6 +10783,7 @@ function startDashboardServer() {
       }
       return;
     }
+
 
     if (url.pathname === '/download/db') {
       if (fs.existsSync(DB_FILE)) {
@@ -10410,6 +10942,75 @@ function startDashboardServer() {
       return;
     }
 
+    // --- ROTAS DE CONFIGURAÇÕES E PARÂMETROS DO MONITOR ---
+    if (url.pathname === '/api/configuracoes' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({
+        ok: true,
+        config: {
+          intervalo_matriz_segundos: getConfig('intervalo_matriz_segundos', 10),
+          intervalo_replicas_segundos: getConfig('intervalo_replicas_segundos', 10),
+          tolerancia_cache_akamai_segundos: getConfig('tolerancia_cache_akamai_segundos', 60),
+          sla_propagacao_tse_segundos: getConfig('sla_propagacao_tse_segundos', 90),
+          tolerancia_propagacao_segundos: getConfig('tolerancia_cache_akamai_segundos', 60)
+        }
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/configuracoes' && req.method === 'POST') {
+      let bodyStr = '';
+      req.on('data', chunk => bodyStr += chunk);
+      req.on('end', () => {
+        let params = {};
+        try { params = JSON.parse(bodyStr); } catch {}
+
+        let intMatriz = parseInt(params.intervalo_matriz_segundos, 10);
+        let intReplicas = parseInt(params.intervalo_replicas_segundos, 10);
+        let tolCache = parseInt(params.tolerancia_cache_akamai_segundos !== undefined ? params.tolerancia_cache_akamai_segundos : params.tolerancia_propagacao_segundos, 10);
+        let slaTse = parseInt(params.sla_propagacao_tse_segundos, 10);
+
+        if (isNaN(intMatriz) || intMatriz < 1) intMatriz = 10;
+        if (isNaN(intReplicas) || intReplicas < 1) intReplicas = 10;
+        if (isNaN(tolCache) || tolCache < 5) tolCache = 60;
+        if (isNaN(slaTse) || slaTse < 5) slaTse = 90;
+
+        setConfig('intervalo_matriz_segundos', intMatriz);
+        setConfig('intervalo_replicas_segundos', intReplicas);
+        setConfig('tolerancia_cache_akamai_segundos', tolCache);
+        setConfig('sla_propagacao_tse_segundos', slaTse);
+        setConfig('tolerancia_propagacao_segundos', tolCache);
+
+        // Reconfigura imediatamente os schedulers em memória
+        scheduleOriginPolling();
+        scheduleReplicaPolling();
+
+        console.log(`⚙️ [PARÂMETROS ATUALIZADOS] Matriz: ${intMatriz}s | Réplicas: ${intReplicas}s | Cache Akamai: ${tolCache}s | SLA TSE: ${slaTse}s`);
+
+        broadcastUpdate('CONFIG_UPDATED', {
+          intervalo_matriz_segundos: intMatriz,
+          intervalo_replicas_segundos: intReplicas,
+          tolerancia_cache_akamai_segundos: tolCache,
+          sla_propagacao_tse_segundos: slaTse,
+          tolerancia_propagacao_segundos: tolCache
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          ok: true,
+          message: 'Parâmetros atualizados com sucesso!',
+          config: {
+            intervalo_matriz_segundos: intMatriz,
+            intervalo_replicas_segundos: intReplicas,
+            tolerancia_cache_akamai_segundos: tolCache,
+            sla_propagacao_tse_segundos: slaTse,
+            tolerancia_propagacao_segundos: tolCache
+          }
+        }));
+      });
+      return;
+    }
+
     // --- ROTAS DE GERENCIAMENTO DE SERVIDORES (MULTI-NÓS) ---
     if (url.pathname === '/api/servidores' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -10437,6 +11038,13 @@ function startDashboardServer() {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'Chave, nome e URL base são obrigatórios.' }));
           return;
+        }
+
+        // Auto-correção para URLs de front-end web (/app/ ou /teste-unificado/)
+        if (baseUrl.includes('/teste-unificado/app') || baseUrl.endsWith('/teste-unificado/') || baseUrl.endsWith('/teste-unificado')) {
+          baseUrl = 'https://resultados-hmg.tse.jus.br/simulado2026/';
+        } else {
+          baseUrl = baseUrl.replace(/\/(?:app(?:\/index\.html|\/)?|\bindex\.html).*$/i, '');
         }
 
         if (!baseUrl.endsWith('/')) baseUrl += '/';
@@ -10547,18 +11155,42 @@ function startDashboardServer() {
       req.on('end', async () => {
         let params = {};
         try { params = JSON.parse(bodyStr); } catch {}
-        let targetUrl = String(params.baseUrl || '').trim();
-        if (!targetUrl) {
+        let rawTargetUrl = String(params.baseUrl || '').trim();
+        if (!rawTargetUrl) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'URL é obrigatória' }));
           return;
         }
+
+        let isAppUrl = false;
+        let suggestedBaseUrl = null;
+        let targetUrl = rawTargetUrl;
+
+        // Se o usuário colou a URL da aplicação /app/ ou index.html
+        if (/\/(?:app(?:\/index\.html|\/)?|\bindex\.html)$/i.test(targetUrl) || targetUrl.includes('/teste-unificado/')) {
+          isAppUrl = true;
+          if (targetUrl.includes('/teste-unificado/') || targetUrl.includes('simulado2026')) {
+            suggestedBaseUrl = 'https://resultados-hmg.tse.jus.br/simulado2026/';
+          } else if (targetUrl.includes('resultados-sim.tse.jus.br')) {
+            suggestedBaseUrl = 'https://resultados-sim.tse.jus.br/simulado/simulado2026/';
+          } else if (targetUrl.includes('resultados-hmg.tse.jus.br')) {
+            suggestedBaseUrl = 'https://resultados-hmg.tse.jus.br/simulado2026/';
+          }
+          targetUrl = targetUrl.replace(/\/(?:app(?:\/index\.html|\/)?|\bindex\.html).*$/i, '');
+        }
+
         if (!targetUrl.endsWith('/')) targetUrl += '/';
         const testFileUrl = targetUrl + 'comum/config/ele-c.json?t=' + Date.now();
         const startTime = Date.now();
         try {
           const resp = await httpRequestWithIp(testFileUrl);
           const timeMs = Date.now() - startTime;
+
+          if (!resp.ok && (resp.statusCode === 404 || resp.statusCode === 403) && (rawTargetUrl.includes('/teste-unificado') || rawTargetUrl.includes('/app'))) {
+            isAppUrl = true;
+            suggestedBaseUrl = 'https://resultados-hmg.tse.jus.br/simulado2026/';
+          }
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             ok: resp.ok,
@@ -10567,7 +11199,9 @@ function startDashboardServer() {
             server: resp.headers?.['server'] || null,
             cacheControl: resp.headers?.['cache-control'] || null,
             timeMs,
-            error: resp.error || null
+            error: resp.error || null,
+            isAppUrl,
+            suggestedBaseUrl
           }));
         } catch (err) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -10576,7 +11210,9 @@ function startDashboardServer() {
             statusCode: 0,
             serverIp: null,
             timeMs: Date.now() - startTime,
-            error: err.message
+            error: err.message,
+            isAppUrl,
+            suggestedBaseUrl
           }));
         }
       });
@@ -10840,6 +11476,7 @@ function startDashboardServer() {
 async function start() {
   initLogs();
   initServidores();
+  initConfiguracoes();
   await discoverAvailableElections();
   updateTrackedCatalog();
   initRodadas();
@@ -10867,20 +11504,10 @@ async function start() {
   const allList = Array.from(trackedFiles);
   await runWorkerPool(allList, 15);
 
-  // Loop de varredura cíclica contínua protegido contra sobreposição de ciclos
-  let isPollingCycleRunning = false;
-  setInterval(async () => {
-    if (isPollingCycleRunning) return;
-    isPollingCycleRunning = true;
-    try {
-      const list = Array.from(trackedFiles);
-      await runWorkerPool(list, 15);
-    } catch (err) {
-      console.error('[POLL] Erro no ciclo de polling:', err);
-    } finally {
-      isPollingCycleRunning = false;
-    }
-  }, 6000);
+  // Inicializa os loops de polling desacoplados e independentes
+  console.log(`${CYAN}Iniciando agendamento independente: Matriz (${getConfig('intervalo_matriz_segundos', 10)}s) | Réplicas (${getConfig('intervalo_replicas_segundos', 10)}s) | Tolerância CDN (${getConfig('tolerancia_propagacao_segundos', 90)}s)...${RESET}`);
+  scheduleOriginPolling();
+  scheduleReplicaPolling();
 
   setInterval(syncTabs, 10000);
   setInterval(checkDayRollover, 30000);
