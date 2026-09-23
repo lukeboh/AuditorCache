@@ -54,6 +54,7 @@ if (!fs.existsSync(TEMP_ZIPS_DIR)) { fs.mkdirSync(TEMP_ZIPS_DIR, { recursive: tr
 const LOG_CSV = path.join(WORKSPACE_DIR, 'historico_comparativo.csv');
 const REGRESSIONS_CSV = path.join(WORKSPACE_DIR, 'regressoes_detectadas.csv');
 const ALERT_LOG = path.join(WORKSPACE_DIR, 'regressoes_detectadas.log');
+const DESYNC_INCIDENTS_CSV = path.join(WORKSPACE_DIR, 'incidentes_dessincronia.csv');
 const REPORT_HTML = path.join(WORKSPACE_DIR, 'relatorio_evidencias.html');
 
 if (!fs.existsSync(EVIDENCIAS_DIR)) {
@@ -345,8 +346,10 @@ try { db.exec('ALTER TABLE regressoes ADD COLUMN latency_ms INTEGER;'); } catch 
 try { db.exec('ALTER TABLE leituras ADD COLUMN ghost_ip TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN ghost_ip TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE regressoes ADD COLUMN server_ip TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE leituras ADD COLUMN last_modified_unix INTEGER;'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_arquivo_time ON leituras (arquivo, timestamp_unix);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_call_time ON leituras (arquivo, call_time_unix);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_last_mod ON leituras (last_modified_unix);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_time ON regressoes (timestamp_iso);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_grn ON regressoes (akamai_grn);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_grn ON leituras (akamai_grn);'); } catch (e) {}
@@ -355,6 +358,27 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_req_headers ON leituras (
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_leituras_ghost_ip ON leituras (ghost_ip);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_ghost_ip ON regressoes (ghost_ip);'); } catch (e) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_regressoes_server_ip ON regressoes (server_ip);'); } catch (e) {}
+
+// TABELA DEDICADA: INCIDENTES DE DESSINCRONIA (CRITÉRIO TSE)
+// Armazena estouros de SLA de Dessincronia (>90s) segregados das Regressões de Cache (Ghost Cache)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS incidentes_dessincronia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp_iso TEXT NOT NULL,
+    timestamp_unix INTEGER NOT NULL,
+    servidor TEXT NOT NULL,
+    arquivo TEXT NOT NULL,
+    tempo_dessincronia_segundos REAL NOT NULL,
+    limite_tolerancia_segundos REAL NOT NULL,
+    dg_origem TEXT,
+    hg_origem TEXT,
+    gen_time_origem INTEGER,
+    last_modified_replica TEXT,
+    detalhes TEXT
+  );
+`);
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_inc_dessinc_time ON incidentes_dessincronia (timestamp_unix);'); } catch (e) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_inc_dessinc_file ON incidentes_dessincronia (arquivo);'); } catch (e) {}
 
 // =====================================================================
 // TABELA DE CONFIGURAÇÕES E PARÂMETROS DO SISTEMA
@@ -374,9 +398,11 @@ function initConfiguracoes() {
   const defaults = [
     { chave: 'intervalo_matriz_segundos', valor: '10', descricao: 'Intervalo de busca no servidor matriz (origem) em segundos' },
     { chave: 'intervalo_replicas_segundos', valor: '10', descricao: 'Intervalo de busca nos servidores replicados (cache/CDN) em segundos' },
-    { chave: 'tolerancia_cache_akamai_segundos', valor: '60', descricao: 'Tolerância para convergência interna de cache na CDN Akamai (segundos)' },
-    { chave: 'sla_propagacao_tse_segundos', valor: '90', descricao: 'SLA máximo de latência de propagação e totalização global do TSE (segundos)' },
-    { chave: 'tolerancia_propagacao_segundos', valor: '60', descricao: 'Tolerância legado de convergência de cache' }
+    { chave: 'tolerancia_cache_akamai_segundos', valor: '60', descricao: 'Tolerância de Propagação (Critério Akamai) na CDN (segundos)' },
+    { chave: 'sla_propagacao_tse_segundos', valor: '90', descricao: 'Tolerância de Dessincronia (Critério TSE) entre Origem e Réplica (segundos)' },
+    { chave: 'tolerancia_propagacao_segundos', valor: '60', descricao: 'Tolerância legado de convergência de cache' },
+    { chave: 'tolerancia_propagacao_akamai_segundos', valor: '60', descricao: 'Tolerância de Propagação (Critério Akamai) na CDN (segundos)' },
+    { chave: 'tolerancia_dessincronia_tse_segundos', valor: '90', descricao: 'Tolerância de Dessincronia (Critério TSE) entre Origem e Réplica (segundos)' }
   ];
 
   const nowIso = new Date().toISOString();
@@ -385,32 +411,64 @@ function initConfiguracoes() {
     stmtInsert.run(d.chave, d.valor, d.descricao, nowIso);
   }
 
+  // Atualiza descrições legadas se necessário
+  try {
+    db.prepare("UPDATE configuracoes SET descricao = 'Tolerância de Propagação (Critério Akamai) na CDN (segundos)' WHERE chave = 'tolerancia_cache_akamai_segundos'").run();
+    db.prepare("UPDATE configuracoes SET descricao = 'Tolerância de Dessincronia (Critério TSE) entre Origem e Réplica (segundos)' WHERE chave = 'sla_propagacao_tse_segundos'").run();
+  } catch (e) {}
+
   const rows = db.prepare('SELECT chave, valor FROM configuracoes').all();
   for (const r of rows) {
     configCache.set(r.chave, r.valor);
   }
-  console.log(`⚙️ [CONFIGURAÇÕES] Matriz: ${getConfig('intervalo_matriz_segundos', 10)}s | Réplicas: ${getConfig('intervalo_replicas_segundos', 10)}s | Cache Akamai: ${getConfig('tolerancia_cache_akamai_segundos', 60)}s | SLA TSE: ${getConfig('sla_propagacao_tse_segundos', 90)}s`);
+  console.log(`⚙️ [CONFIGURAÇÕES] Matriz: ${getConfig('intervalo_matriz_segundos', 10)}s | Réplicas: ${getConfig('intervalo_replicas_segundos', 10)}s | Propagação Akamai: ${getConfig('tolerancia_propagacao_akamai_segundos', 60)}s | Dessincronia TSE: ${getConfig('tolerancia_dessincronia_tse_segundos', 90)}s`);
 }
 
 function getConfig(key, defaultValue) {
-  if (configCache.has(key)) {
-    const val = configCache.get(key);
-    const num = Number(val);
-    return isNaN(num) ? val : num;
+  // Resolução com aliases de retrocompatibilidade
+  let lookupKeys = [key];
+  if (key === 'tolerancia_cache_akamai_segundos' || key === 'tolerancia_propagacao_akamai_segundos' || key === 'tolerancia_propagacao_segundos') {
+    lookupKeys = ['tolerancia_propagacao_akamai_segundos', 'tolerancia_cache_akamai_segundos', 'tolerancia_propagacao_segundos'];
+  } else if (key === 'sla_propagacao_tse_segundos' || key === 'tolerancia_dessincronia_tse_segundos') {
+    lookupKeys = ['tolerancia_dessincronia_tse_segundos', 'sla_propagacao_tse_segundos'];
+  }
+
+  for (const k of lookupKeys) {
+    if (configCache.has(k)) {
+      const val = configCache.get(k);
+      const num = Number(val);
+      return isNaN(num) ? val : num;
+    }
   }
   return defaultValue;
 }
 
 function setConfig(key, value) {
   const nowIso = new Date().toISOString();
-  db.prepare('INSERT INTO configuracoes (chave, valor, atualizado_em) VALUES (?, ?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em')
-    .run(key, String(value), nowIso);
+  const stmt = db.prepare('INSERT INTO configuracoes (chave, valor, atualizado_em) VALUES (?, ?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em');
+  
+  stmt.run(key, String(value), nowIso);
   configCache.set(key, String(value));
+
+  // Mantém sincronizados os aliases correspondentes
+  if (key === 'tolerancia_cache_akamai_segundos' || key === 'tolerancia_propagacao_akamai_segundos') {
+    stmt.run('tolerancia_propagacao_akamai_segundos', String(value), nowIso);
+    stmt.run('tolerancia_cache_akamai_segundos', String(value), nowIso);
+    stmt.run('tolerancia_propagacao_segundos', String(value), nowIso);
+    configCache.set('tolerancia_propagacao_akamai_segundos', String(value));
+    configCache.set('tolerancia_cache_akamai_segundos', String(value));
+    configCache.set('tolerancia_propagacao_segundos', String(value));
+  } else if (key === 'sla_propagacao_tse_segundos' || key === 'tolerancia_dessincronia_tse_segundos') {
+    stmt.run('tolerancia_dessincronia_tse_segundos', String(value), nowIso);
+    stmt.run('sla_propagacao_tse_segundos', String(value), nowIso);
+    configCache.set('tolerancia_dessincronia_tse_segundos', String(value));
+    configCache.set('sla_propagacao_tse_segundos', String(value));
+  }
 }
 
 const stmtInsertLeitura = db.prepare(`
-  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json, ghost_ip)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO leituras (timestamp_iso, timestamp_unix, servidor, papel_servidor, arquivo, idg, dg, hg, gen_time, secoes, secoes_pct, votos, etag, status_ordem, detalhes, evidencia_raw_path, dt, ht, tot_time, headers_json, server_ip, cache_control, cdn_status, max_age, akamai_grn, call_time_iso, call_time_unix, latency_ms, request_headers_json, ghost_ip, last_modified_unix)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const stmtInsertRegressao = db.prepare(`
@@ -422,6 +480,53 @@ const stmtInsertComparativo = db.prepare(`
   INSERT INTO comparativos (timestamp_iso, arquivo, hmg_fonte_dg, hmg_fonte_hg, hmg_fonte_idg, hmg_fonte_secoes, sim_cache_dg, sim_cache_hg, sim_cache_idg, sim_cache_secoes, atraso_segundos, defasagem_idg, tempo_sync_segundos, status_comparacao, descricao)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
+
+const stmtInsertIncidenteDessincronia = db.prepare(`
+  INSERT INTO incidentes_dessincronia (timestamp_iso, timestamp_unix, servidor, arquivo, tempo_dessincronia_segundos, limite_tolerancia_segundos, dg_origem, hg_origem, gen_time_origem, last_modified_replica, detalhes)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+function recordDesyncIncident(serverKey, relPath, tempoDessincroniaSec, limiteToleranciaSec, dgOrigem, hgOrigem, genTimeOrigem, lastModifiedReplica, detalhes) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const nowUnix = now.getTime();
+  try {
+    stmtInsertIncidenteDessincronia.run(
+      nowIso,
+      nowUnix,
+      serverKey,
+      relPath,
+      tempoDessincroniaSec,
+      limiteToleranciaSec,
+      dgOrigem || null,
+      hgOrigem || null,
+      genTimeOrigem || null,
+      lastModifiedReplica || null,
+      detalhes || null
+    );
+  } catch (err) {
+    console.error('Erro ao gravar incidente de dessincronia no SQLite:', err.message);
+  }
+
+  try {
+    const csvExists = fs.existsSync(DESYNC_INCIDENTS_CSV);
+    const line = `"${nowIso}","${serverKey}","${relPath}","${tempoDessincroniaSec}","${limiteToleranciaSec}","${dgOrigem || ''}","${hgOrigem || ''}","${lastModifiedReplica || ''}","${(detalhes || '').replace(/"/g, '""')}"\n`;
+    if (!csvExists) {
+      fs.writeFileSync(DESYNC_INCIDENTS_CSV, 'timestamp_iso,servidor,arquivo,tempo_dessincronia_segundos,limite_tolerancia_segundos,dg_origem,hg_origem,last_modified_replica,detalhes\n' + line, 'utf-8');
+    } else {
+      fs.appendFileSync(DESYNC_INCIDENTS_CSV, line, 'utf-8');
+    }
+  } catch (err) {
+    console.error('Erro ao gravar incidentes_dessincronia.csv:', err.message);
+  }
+
+  console.log(`\n${YELLOW}${BOLD}⚠️⚠️ [INCIDENTE: ESTOURO DE TOLERÂNCIA DE DESSINCRONIA (TSE)!] ⚠️⚠️${RESET}`);
+  console.log(`${YELLOW}Arquivo:${RESET}    ${BOLD}${getFilename(relPath)}${RESET} (${serverKey})`);
+  console.log(`${YELLOW}Duração:${RESET}    ${BOLD}${formatMinSec(tempoDessincroniaSec)} (${tempoDessincroniaSec}s)${RESET} > Limite Tolerância: ${limiteToleranciaSec}s`);
+  console.log(`${YELLOW}Origem:${RESET}     dg=${dgOrigem || '-'} hg=${hgOrigem || '-'}`);
+  console.log(`${YELLOW}Réplica:${RESET}    Last-Modified=${lastModifiedReplica || '-'}`);
+  console.log(`${YELLOW}${BOLD}>> Registrado em incidentes_dessincronia (Não afeta histórico pericial de Regressões) <<${RESET}\n`);
+}
 
 // =====================================================================
 // GERENCIADOR DE SERVIDORES (TOPOLOGIA MULTI-NÓS)
@@ -844,10 +949,48 @@ function updateTrackedCatalog() {
 
 const trackedFiles = new Set(buildCatalog());
 
-// =====================================================================
-// RASTREAMENTO DE SLA E ESTRUTURAS DE ESTADO
-// =====================================================================
 const fileSyncTracker = new Map();
+const filePropagationTracker = new Map();
+
+function renderTerminalKpiBox(customStats) {
+  const tolDessinc = getConfig('tolerancia_dessincronia_tse_segundos', 90);
+  const tolProp = getConfig('tolerancia_propagacao_akamai_segundos', 60);
+
+  const desync = customStats?.desyncStats || { qtd: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+  const prop = customStats?.propagationStats || { qtd: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+
+  const padR = (str, len) => String(str).padEnd(len);
+  const innerLen = 85;
+
+  const headerContent = ` SLA   Tolerância de Dessincronia: ${tolDessinc}s (TSE)  Tolerância de Propagação: ${tolProp}s (Akamai)`;
+  const paddedHeader = '│' + headerContent.padEnd(innerLen) + '│';
+
+  const colHeaders = '│' + ' '.repeat(21) + 'QTD   MÉDIA    P90      P95      P99      P100' + ' '.repeat(18) + '│';
+
+  const formatRow = (label, st) => {
+    const content = ' ' + padR(label, 20) +
+      padR(st.qtd ?? 0, 6) +
+      padR(formatMinSec(st.avgSec), 9) +
+      padR(formatMinSec(st.p90Sec), 9) +
+      padR(formatMinSec(st.p95Sec), 9) +
+      padR(formatMinSec(st.p99Sec), 9) +
+      padR(formatMinSec(st.p100Sec), 9);
+    return '│' + content.padEnd(innerLen) + '│';
+  };
+
+  const row1 = formatRow('DESSINCRONIZADOS', desync);
+  const row2 = formatRow('EM PROPAGAÇÃO', prop);
+
+  return [
+    `┌${'─'.repeat(innerLen)}┐`,
+    paddedHeader,
+    `│${' '.repeat(innerLen)}│`,
+    colHeaders,
+    row1,
+    row2,
+    `└${'─'.repeat(innerLen)}┘`
+  ].join('\n');
+}
 
 const recentLogs = [];
 let totalChecksCount = 0;
@@ -1136,20 +1279,39 @@ function getComparison(relPath) {
     } else {
       syncSlaSec = 0;
     }
-    const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
-    syncSlaStatus = syncSlaSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
+    const tolDessincTseSec = getConfig('tolerancia_dessincronia_tse_segundos', 90);
+    syncSlaStatus = syncSlaSec > tolDessincTseSec ? 'ALERTA' : 'OK';
     syncSlaText = formatMinSec(syncSlaSec);
   } else if (tracker) {
-    const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
+    const tolDessincTseSec = getConfig('tolerancia_dessincronia_tse_segundos', 90);
     const refTime = tracker.originDetectedAt || tracker.hmgDetectedAt;
     if (tracker.isWaiting && refTime) {
       const elapsed = Math.max(0, Math.round((Date.now() - refTime) / 1000));
       syncSlaSec = elapsed;
-      syncSlaStatus = elapsed > toleranciaSlaSec ? 'CRITICO' : 'AGUARDANDO';
-      syncSlaText = elapsed > toleranciaSlaSec ? `🚨 ${formatMinSec(elapsed)} (limite extrapolado)` : `⏱️ ${formatMinSec(elapsed)} (em propagação)`;
+      if (elapsed > tolDessincTseSec) {
+        syncSlaStatus = 'CRITICO';
+        syncSlaText = `🚨 ${formatMinSec(elapsed)} (limite TSE extrapolado)`;
+        if (!tracker.desyncIncidentTriggered) {
+          tracker.desyncIncidentTriggered = true;
+          recordDesyncIncident(
+            primaryReplicaKey,
+            relPath,
+            elapsed,
+            tolDessincTseSec,
+            tracker.targetDg,
+            tracker.targetHg,
+            tracker.targetGenTime,
+            '-',
+            'Tempo de espera por replicação extrapolou a Tolerância de Dessincronia do TSE'
+          );
+        }
+      } else {
+        syncSlaStatus = 'AGUARDANDO';
+        syncSlaText = `⏱️ ${formatMinSec(elapsed)} (em sincronização)`;
+      }
     } else if (tracker.lastSyncSec !== null) {
       syncSlaSec = tracker.lastSyncSec;
-      syncSlaStatus = tracker.lastSyncSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
+      syncSlaStatus = tracker.lastSyncSec > tolDessincTseSec ? 'ALERTA' : 'OK';
       syncSlaText = formatMinSec(tracker.lastSyncSec);
     }
   }
@@ -1185,19 +1347,19 @@ function getComparison(relPath) {
         }
       }
 
-      const toleranciaSlaSec = getConfig('tolerancia_propagacao_segundos', 90);
+      const tolDessincTseSec = getConfig('tolerancia_dessincronia_tse_segundos', 90);
       const repInSync = (originState.dg === rState.dg && originState.hg === rState.hg);
       if (repInSync) {
         const repTracker = tracker?.replicas?.[rep.chave];
         rSyncSlaSec = repTracker?.syncSec ?? tracker?.lastSyncSec ?? 0;
-        rSyncSlaStatus = rSyncSlaSec > toleranciaSlaSec ? 'ALERTA' : 'OK';
+        rSyncSlaStatus = rSyncSlaSec > tolDessincTseSec ? 'ALERTA' : 'OK';
         rSyncSlaText = formatMinSec(rSyncSlaSec);
       } else if (tracker && (tracker.originDetectedAt || tracker.hmgDetectedAt)) {
         const refTime = tracker.originDetectedAt || tracker.hmgDetectedAt;
         const elapsed = Math.max(0, Math.round((Date.now() - refTime) / 1000));
         rSyncSlaSec = elapsed;
-        rSyncSlaStatus = elapsed > toleranciaSlaSec ? 'CRITICO' : 'AGUARDANDO';
-        rSyncSlaText = elapsed > toleranciaSlaSec ? `🚨 ${formatMinSec(elapsed)}` : `⏱️ ${formatMinSec(elapsed)}`;
+        rSyncSlaStatus = elapsed > tolDessincTseSec ? 'CRITICO' : 'AGUARDANDO';
+        rSyncSlaText = elapsed > tolDessincTseSec ? `🚨 ${formatMinSec(elapsed)}` : `⏱️ ${formatMinSec(elapsed)}`;
       }
     }
 
@@ -1721,7 +1883,7 @@ function generateHtmlReport(embeddedData = null) {
         <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'regs')" title="Definição do indicador">ℹ️</button>
       </div>
       <div class="stat-value" id="kpiRegs" style="color: #f87171;">0</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">1ª: <span id="kpiFirstReg" style="color: #fca5a5;">-</span> | Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
     </div>
     <div class="stat-card" style="border-left: 3px solid #f59e0b;">
       <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
@@ -1733,9 +1895,9 @@ function generateHtmlReport(embeddedData = null) {
     </div>
     <div class="stat-card" style="border-left: 3px solid #10b981;">
       <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
-        <span>SLA Sync Cache (DG/HG)</span>
+        <span style="font-weight: 700;">SLA Duplo Critério</span>
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span id="slaScopeLabel" style="color: #34d399;">Hoje</span>
+          <span style="font-size: 0.65rem; color: #34d399;">TSE: 90s | Akamai: 60s</span>
           <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'sla')" title="Definição do indicador">ℹ️</button>
         </div>
       </div>
@@ -2313,12 +2475,12 @@ function generateHtmlReport(embeddedData = null) {
         body: '<p><strong>O que representa:</strong> Total de anomalias periciais detectadas no ciclo/rodada em que o nó de cache (SIM/Akamai) ou a própria origem retornou dados cronologicamente ou quantitativamente inferiores a um estado anterior já validado (recuo de DG/HG, redução de votos/seções ou retrocesso de IDG).</p><p><strong>Carimbo "Última":</strong> Exibe a data e o horário exato da ocorrência mais recente registrada no banco de dados no formato estrito <code>dd/MM/yyyy - HH:mm:ss</code>.</p>'
       },
       desync: {
-        title: '⏳ Cache Atrasado (Defasagem Borda vs Origem)',
-        body: '<p><strong>O que representa:</strong> Quantidade de arquivos em que a <strong>Origem (HMG)</strong> já disponibilizou uma versão mais recente (data/hora de geração DG/HG mais nova ou número sequencial IDG superior), porém a <strong>Réplica de Cache (SIM / Akamai)</strong> continua entregando uma versão anterior ao eleitor/usuário.</p><p><strong>Por que pode marcar 100% (ex: 142/142)?</strong><br>Quando a Origem (HMG) totaliza uma nova rodada e os nós de Cache (SIM) deixam de receber atualizações ou o simulador é paralisado (por exemplo, na noite de 11/09 às 20:04 a origem atualizou, enquanto o nó SIM parou às 19:31), todos os arquivos que tiveram novos dados na origem ficam pendentes de sincronização na borda, resultando em 100% de defasagem legítima detectada pela auditoria.</p>'
+        title: '⏳ Dessincronizados (Critério TSE) & Tolerância de 90s',
+        body: '<p><strong>O que representa:</strong> Arquivos gerados na <strong>Origem (HMG)</strong> cuja versão mais recente (DG/HG) ainda não foi entregue pela <strong>Réplica (SIM / Akamai)</strong>.</p><p><strong>Cálculo do Tempo:</strong> Cronometrado desde o carimbo interno de geração (<code>dg/hg</code>) na Origem até o momento da primeira detecção (cabeçalho <code>Last-Modified</code>) na Réplica.</p><p><strong>🚨 Geração de Incidente de Dessincronia:</strong> Caso esse tempo exceda a tolerância de <strong>90s (TSE)</strong>, é formalmente registrado um <strong>Incidente de Dessincronia</strong>. <em>Atenção:</em> Este incidente NÃO é uma regressão de cache, pois os dados não recuaram, apenas atrasaram na saída da origem.</p>'
       },
       sla: {
-        title: '⚡ SLA de Sincronização de Cache (DG/HG)',
-        body: '<p><strong>O que representa:</strong> Mede o tempo decorrido (em segundos/minutos) entre a geração do arquivo na Origem HMG e sua efetiva disponibilidade capturada na Réplica SIM (Cache Akamai).</p><p><strong>Métricas:</strong><ul><li><strong>MÉDIA:</strong> Tempo médio de propagação dos arquivos na rodada.</li><li><strong>P90, P95, P99:</strong> Percentis de latência (90%, 95% e 99% das atualizações foram sincronizadas dentro deste limite de tempo).</li></ul></p><p><em>Nota:</em> Em rodadas sem alterações concomitantes nos dois ambientes, o indicador exibe 0m 00s.</p>'
+        title: '⚡ SLA de Sincronização e Propagação (Duplo Critério)',
+        body: '<p><strong>Matriz de Duplo Critério:</strong><ul><li><strong>1. DESSINCRONIZADOS (TSE):</strong> Mede o tempo desde a geração do arquivo na Origem até sua primeira entrega na Réplica (Tolerância: 90s). Se ultrapassar, gera <em>Incidente de Dessincronia</em>.</li><li><strong>2. EM PROPAGAÇÃO (Akamai):</strong> Mede a convergência interna entre lâminas Anycast da CDN a partir da 1ª detecção da versão nova (Tolerância: 60s). Se versões antigas forem entregues após 60s, gera <em>Incidente Pericial de Regressão de Cache (Ghost Cache)</em>.</li></ul></p><p><strong>Distribuição Estatística:</strong> Exibe Quantidade ativa (QTD), MÉDIA e percentis P90, P95, P99 e P100 para ambos os estados na rodada.</p>'
       },
       http: {
         title: '🌐 Atributos HTTP & Edge Cache (Akamai)',
@@ -2450,16 +2612,19 @@ function generateHtmlReport(embeddedData = null) {
       const tabRegsBadge = document.getElementById('tabRegsBadge');
       if (tabRegsBadge) tabRegsBadge.textContent = filteredRegs.length;
 
+      const kpiFirstRegEl = document.getElementById('kpiFirstReg');
       const kpiLastRegEl = document.getElementById('kpiLastReg');
-      if (kpiLastRegEl) {
+      if (kpiLastRegEl || kpiFirstRegEl) {
         if (filteredRegs.length > 0) {
-          const firstReg = filteredRegs[0];
-          const timeStr = firstReg.timestamp_iso || firstReg.call_time_iso;
-          kpiLastRegEl.textContent = formatDateTimeFull(timeStr || compData.lastRegressionTime);
-        } else if (compData.lastRegressionTime && compData.lastRegressionTime !== '-') {
-          kpiLastRegEl.textContent = formatDateTimeFull(compData.lastRegressionTime);
+          const latestReg = filteredRegs[0];
+          const oldestReg = filteredRegs[filteredRegs.length - 1];
+          const latestTime = latestReg.timestamp_iso || latestReg.call_time_iso;
+          const oldestTime = oldestReg.timestamp_iso || oldestReg.call_time_iso;
+          if (kpiLastRegEl) kpiLastRegEl.textContent = formatDateTimeFull(latestTime || compData.lastRegressionTime);
+          if (kpiFirstRegEl) kpiFirstRegEl.textContent = formatDateTimeFull(oldestTime || compData.firstRegressionTime || latestTime);
         } else {
-          kpiLastRegEl.textContent = '-';
+          if (kpiLastRegEl) kpiLastRegEl.textContent = (compData.lastRegressionTime && compData.lastRegressionTime !== '-') ? formatDateTimeFull(compData.lastRegressionTime) : '-';
+          if (kpiFirstRegEl) kpiFirstRegEl.textContent = (compData.firstRegressionTime && compData.firstRegressionTime !== '-') ? formatDateTimeFull(compData.firstRegressionTime) : '-';
         }
       }
 
@@ -4011,6 +4176,7 @@ function generateHtmlReport(embeddedData = null) {
       updateKpis({
         comparison: rawComparisonList,
         regressionsTimeCount: rawRegressionsList.length,
+        firstRegressionTime: d.firstRegressionTime || '-',
         lastRegressionTime: d.lastRegressionTime || '-',
         todaySlaStats: d.todaySlaStats,
         cacheStats: d.cacheStats
@@ -4427,6 +4593,13 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
   const ghostIp = meta.ghostIp || (effectiveGrn ? decodeAkamaiGrn(effectiveGrn)?.ghostIp : null) || null;
   const serverIp = meta.serverIp || (responseHeaders && responseHeaders['x-server-ip']) || (serverKey === 'HMG' ? '192.168.218.33' : null);
 
+  const lmDate = meta.lastModifiedHeader || (responseHeaders && (responseHeaders['last-modified'] || responseHeaders['Last-Modified'])) || null;
+  let lastModifiedUnix = null;
+  if (lmDate) {
+    const d = new Date(lmDate).getTime();
+    if (!isNaN(d)) lastModifiedUnix = d;
+  }
+
   // 1. Grava na tabela leituras
   try {
     stmtInsertLeitura.run(
@@ -4459,7 +4632,8 @@ function recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, 
       callTimeUnix,
       latencyMs,
       JSON.stringify(requestHeaders || {}),
-      ghostIp
+      ghostIp,
+      lastModifiedUnix
     );
   } catch (e) {
     console.error('Erro ao gravar leitura no SQLite:', e.message);
@@ -4758,13 +4932,13 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
   const originServer = getOriginServer();
   const isOriginNode = originServer && (originServer.chave === serverKey);
   const tracker = fileSyncTracker.get(relPath);
-  const tolAkamaiSec = getConfig('tolerancia_cache_akamai_segundos', 60);
-  const slaTseSec = getConfig('sla_propagacao_tse_segundos', 90);
+  const tolAkamaiSec = getConfig('tolerancia_propagacao_akamai_segundos', 60);
+  const tolDessincTseSec = getConfig('tolerancia_dessincronia_tse_segundos', 90);
 
   if (isRegression) {
     // Para nós de RÉPLICA / BORDA / CDN (ex: SIM, Akamai), aplica os critérios desacoplados:
-    // 1) Critério Akamai: Tolerância de cache (60s) a partir da 1ª entrega da versão nova pela própria CDN
-    // 2) Critério TSE: SLA de propagação (90s) a partir da publicação na Origem
+    // 1) Critério Akamai: Tolerância de propagação (60s) a partir da 1ª entrega da versão nova pela própria CDN
+    // 2) Critério TSE: Tolerância de dessincronia (90s) a partir da geração na Origem
     if (!isOriginNode) {
       // Determina quando a versão MAIS RECENTE (prev) foi observada pela CDN:
       // 1) Prioriza o momento em que a versão mais nova (prev) foi entregue pela própria réplica
@@ -4793,16 +4967,52 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
 
       if (elapsedCdnSec !== null && elapsedCdnSec <= tolAkamaiSec) {
         // DENTRO DA TOLERÂNCIA DE 60s DA AKAMAI:
-        // Trata-se de convergência transitória interna da malha Anycast da CDN, NÃO constituindo falha de cache Akamai!
+        // Trata-se de convergência transitória interna da malha Anycast da CDN (EM_PROPAGACAO)!
         currentMeta.status = 'EM_PROPAGACAO';
         currentMeta.criterion = 'CONVERGENCIA_CACHE_AKAMAI';
-        let detailMsg = `${reasons.join(' | ')} [EM CONVERGÊNCIA AKAMAI: ${elapsedCdnSec}s decorridos <= janela de ${tolAkamaiSec}s]`;
-        if (elapsedOrigemSec !== null && elapsedOrigemSec > slaTseSec) {
-          detailMsg += ` [ATENÇÃO: VIOLAÇÃO DE SLA TSE: ${elapsedOrigemSec}s > ${slaTseSec}s]`;
+        let detailMsg = `${reasons.join(' | ')} [EM PROPAGAÇÃO AKAMAI: ${elapsedCdnSec}s decorridos <= janela de ${tolAkamaiSec}s]`;
+        if (elapsedOrigemSec !== null && elapsedOrigemSec > tolDessincTseSec) {
+          detailMsg += ` [ATENÇÃO: ESTOURO TOLERÂNCIA DESSINCRONIA TSE: ${elapsedOrigemSec}s > ${tolDessincTseSec}s]`;
+          if (!tracker?.desyncIncidentTriggered) {
+            if (tracker) tracker.desyncIncidentTriggered = true;
+            recordDesyncIncident(
+              serverKey,
+              relPath,
+              elapsedOrigemSec,
+              tolDessincTseSec,
+              tracker?.targetDg,
+              tracker?.targetHg,
+              tracker?.targetGenTime,
+              currentMeta.lastModifiedHeader || '-',
+              'Tempo decorrido pós-origem ultrapassou Tolerância de Dessincronia do TSE durante propagação'
+            );
+          }
         }
         currentMeta.details = detailMsg;
 
-        console.log(`[${localTime}] ${YELLOW}⏳ [${serverKey} EM CONVERGÊNCIA AKAMAI]${RESET} ${BOLD}${filename}${RESET}: Oscilação transitória de borda (${elapsedCdnSec}s decorridos <= ${tolAkamaiSec}s).`);
+        console.log(`[${localTime}] ${YELLOW}⏳ [${serverKey} EM PROPAGAÇÃO AKAMAI]${RESET} ${BOLD}${filename}${RESET}: Oscilação transitória de borda (${elapsedCdnSec}s decorridos <= janela de ${tolAkamaiSec}s).`);
+
+        // Atualiza rastreador de propagação em memória
+        const propKey = `${serverKey}:${relPath}`;
+        let propItem = filePropagationTracker.get(propKey);
+        if (!propItem || propItem.targetDg !== prev?.dg || propItem.targetHg !== prev?.hg) {
+          propItem = {
+            targetDg: prev?.dg,
+            targetHg: prev?.hg,
+            firstDetectionLm: cdnFirstSeen || callTimeUnix,
+            lastRecoveryLm: callTimeUnix,
+            hadOldVersionInCycle: true,
+            isPropagating: true,
+            lastSeenAt: callTimeUnix,
+            propagationSec: elapsedCdnSec || 0
+          };
+        } else {
+          propItem.hadOldVersionInCycle = true;
+          propItem.isPropagating = true;
+          propItem.propagationSec = elapsedCdnSec || 0;
+          propItem.lastSeenAt = callTimeUnix;
+        }
+        filePropagationTracker.set(propKey, propItem);
 
         // Grava apenas em leituras (telemetria completa e rastreio de nós Ghost), SEM registrar em regressoes e SEM alarme
         recordVersionAndEvidence(serverKey, relPath, payload, rawText, source, headers, currentMeta, false, null, 'EM_PROPAGACAO');
@@ -4844,10 +5054,24 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
     let elapsedMsg = '';
     if (!isOriginNode) {
       if (elapsedCdnSec !== null) {
-        elapsedMsg += ` [FALHA DE CACHE AKAMAI: extrapolou tolerância de ${tolAkamaiSec}s (${elapsedCdnSec}s pós-CDN)]`;
+        elapsedMsg += ` [FALHA DE CACHE AKAMAI: extrapolou tolerância de propagação de ${tolAkamaiSec}s (${elapsedCdnSec}s pós-CDN)]`;
       }
-      if (elapsedOrigemSec !== null && elapsedOrigemSec > slaTseSec) {
-        elapsedMsg += ` [VIOLAÇÃO SLA TSE: ${elapsedOrigemSec}s pós-origem > ${slaTseSec}s]`;
+      if (elapsedOrigemSec !== null && elapsedOrigemSec > tolDessincTseSec) {
+        elapsedMsg += ` [VIOLAÇÃO TOLERÂNCIA DESSINCRONIA TSE: ${elapsedOrigemSec}s pós-origem > ${tolDessincTseSec}s]`;
+        if (!tracker?.desyncIncidentTriggered) {
+          if (tracker) tracker.desyncIncidentTriggered = true;
+          recordDesyncIncident(
+            serverKey,
+            relPath,
+            elapsedOrigemSec,
+            tolDessincTseSec,
+            tracker?.targetDg,
+            tracker?.targetHg,
+            tracker?.targetGenTime,
+            currentMeta.lastModifiedHeader || '-',
+            'Tempo pós-origem excedeu Tolerância de Dessincronia do TSE no momento da confirmação de regressão'
+          );
+        }
       }
     }
 
@@ -4956,25 +5180,72 @@ function processVersion(serverKey, relPath, payload, rawText, source, headers = 
       // e registra a conclusão de sincronização da réplica quando a réplica EFETIVAMENTE
       // entregar a versão nova/alvo, NUNCA enquanto ela ainda estiver servindo a versão antiga!
       if (isTargetOrNewer) {
+        const replicaLmUnix = (currentMeta.lastModifiedHeader ? new Date(currentMeta.lastModifiedHeader).getTime() : null);
+        const effectiveReplicaTime = (replicaLmUnix && !isNaN(replicaLmUnix)) ? replicaLmUnix : (callTimeUnix || Date.now());
+
         if (!tracker.firstSeenCdnAt) {
-          tracker.firstSeenCdnAt = callTimeUnix || Date.now();
+          tracker.firstSeenCdnAt = effectiveReplicaTime;
         }
         if (!tracker.replicas) tracker.replicas = {};
         if (!tracker.replicas[serverKey]) {
-          const syncSec = tracker.originDetectedAt ? Math.max(0, Math.round(((callTimeUnix || Date.now()) - tracker.originDetectedAt) / 1000)) : 0;
+          const originPubTime = tracker.originDetectedAt || tracker.hmgDetectedAt;
+          const syncSec = originPubTime ? Math.max(0, Math.round(((callTimeUnix || Date.now()) - originPubTime) / 1000)) : 0;
           tracker.replicas[serverKey] = {
-            firstSeenAt: callTimeUnix || Date.now(),
-            syncedAt: callTimeUnix || Date.now(),
+            firstSeenAt: effectiveReplicaTime,
+            syncedAt: effectiveReplicaTime,
             syncSec,
             isWaiting: false
           };
           tracker.lastSyncSec = syncSec;
           tracker.isWaiting = false;
+
+          const tolDessincTseSec = getConfig('tolerancia_dessincronia_tse_segundos', 90);
+          if (syncSec > tolDessincTseSec && !tracker.desyncIncidentTriggered) {
+            tracker.desyncIncidentTriggered = true;
+            recordDesyncIncident(
+              serverKey,
+              relPath,
+              syncSec,
+              tolDessincTseSec,
+              tracker.targetDg || dg,
+              tracker.targetHg || hg,
+              originGenTime,
+              currentMeta.lastModifiedHeader || '-',
+              'Tempo de dessincronização medido na 1ª detecção da réplica excedeu Tolerância do TSE'
+            );
+          }
+
           console.log(`   ${CYAN}⚡ [SLA SYNC DG/HG CONCLUÍDO]${RESET} ${filename}: Sincronizou no nó ${serverKey} em ${BOLD}${formatMinSec(syncSec)}${RESET}!`);
         } else {
           if (!tracker.replicas[serverKey].firstSeenAt) {
-            tracker.replicas[serverKey].firstSeenAt = callTimeUnix || Date.now();
+            tracker.replicas[serverKey].firstSeenAt = effectiveReplicaTime;
           }
+        }
+
+        // Atualiza Rastreamento de Propagação Akamai
+        const propKey = `${serverKey}:${relPath}`;
+        let propItem = filePropagationTracker.get(propKey);
+        if (!propItem || propItem.targetDg !== dg || propItem.targetHg !== hg) {
+          propItem = {
+            targetDg: dg,
+            targetHg: hg,
+            firstDetectionLm: effectiveReplicaTime,
+            lastRecoveryLm: effectiveReplicaTime,
+            hadOldVersionInCycle: false,
+            isPropagating: true,
+            lastSeenAt: callTimeUnix || Date.now(),
+            propagationSec: 0
+          };
+          filePropagationTracker.set(propKey, propItem);
+        } else {
+          propItem.lastRecoveryLm = effectiveReplicaTime;
+          if (propItem.hadOldVersionInCycle) {
+            propItem.propagationSec = Math.max(0, Math.round((effectiveReplicaTime - propItem.firstDetectionLm) / 1000));
+            propItem.hadOldVersionInCycle = false;
+          } else {
+            propItem.propagationSec = Math.max(0, Math.round((effectiveReplicaTime - propItem.firstDetectionLm) / 1000));
+          }
+          propItem.lastSeenAt = callTimeUnix || Date.now();
         }
       }
     }
@@ -5557,14 +5828,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     .stats-grid { 
       display: grid; 
-      grid-template-columns: 0.72fr 0.72fr 1.05fr 2.55fr 2.35fr; 
+      grid-template-columns: 0.70fr 0.70fr 1.30fr 2.50fr 2.20fr; 
       gap: 10px; 
       margin-bottom: 16px; 
       align-items: stretch;
     }
     @media (max-width: 1400px) {
       .stats-grid {
-        grid-template-columns: 0.9fr 0.9fr 1.2fr 2.6fr;
+        grid-template-columns: 0.85fr 0.85fr 1.35fr 2.55fr;
       }
       .stat-card-ttl {
         grid-column: span 4;
@@ -5760,9 +6031,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           </button>
           <div class="menu-content" id="exportMenuContent">
             <a href="javascript:void(0)" onclick="openRegressoesModal()">🚨 Inspecionar Regressões da Rodada (Modal)</a>
+            <a href="javascript:void(0)" onclick="openIncidentesDessincroniaModal()">⏳ Inspecionar Incidentes de Dessincronia (Modal)</a>
             <a href="/report" target="_blank">📄 Abrir Dossiê Forense (HTML)</a>
             <a href="/download/db">💾 Baixar Banco SQLite (tdtot_auditoria.db)</a>
             <a href="/download/csv-regressoes">📊 Baixar CSV de Regressões</a>
+            <a href="/download/csv-incidentes-dessincronia">⚠️ Baixar CSV de Incidentes de Dessincronia</a>
             <a href="/download/csv-comparativo">📈 Baixar CSV de Propagação</a>
             <a href="javascript:void(0)" onclick="openZipModal()">📦 Baixar Versões Salvas (ZIP)</a>
           </div>
@@ -5782,7 +6055,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <!-- SELETOR PARÂMETROS AKAMAI / POLLING (30px) -->
       <div style="height: 30px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); padding: 0 10px; border-radius: 8px;">
         <span style="font-size: 0.76rem; color: #34d399; font-weight: 700;">⏱️ Polling & Tolerância:</span>
-        <span id="headerParamsSummary" style="font-size: 0.80rem; font-weight: 600; color: #f8fafc;">Matriz: 10s | Réplicas: 10s | Cache Akamai: 60s | SLA TSE: 90s</span>
+        <span id="headerParamsSummary" style="font-size: 0.80rem; font-weight: 600; color: #f8fafc;">Matriz: 10s | Réplicas: 10s | Propagação Akamai: 60s | Dessincronia TSE: 90s</span>
         <button onclick="openConfigModal()" class="btn-copy" style="padding: 1px 7px; font-size: 0.72rem; height: 22px; display: inline-flex; align-items: center; margin-left: 2px;" title="Configurar tempos de busca (Matriz/Réplicas) e tolerância Akamai">⚙️ Ajustar</button>
       </div>
     </div>
@@ -5803,54 +6076,89 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
 
     <!-- Card 3: Regressão Hora (Menor/Médio) -->
-    <div class="stat-card" style="padding: 10px 14px; border-left: 3px solid var(--accent-red); display: flex; flex-direction: column; justify-content: space-between;">
-      <div class="stat-label" style="font-size: 0.70rem; margin-bottom: 4px;">Regressão Hora</div>
-      <div style="display: flex; gap: 12px; align-items: baseline;">
+    <div class="stat-card" onclick="openRegressoesModal()" title="Clique para inspecionar todas as regressões da rodada" style="padding: 10px 14px; border-left: 3px solid var(--accent-red); display: flex; flex-direction: column; justify-content: space-between; cursor: pointer;">
+      <div class="stat-label" style="font-size: 0.70rem; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+        <span>Regressão Hora</span>
+        <span style="font-size: 0.62rem; color: #f87171; opacity: 0.85;">🚨 Auditoria</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: nowrap;">
         <div>
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Quantidade</div>
+          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Qtd</div>
           <div id="countRegTime" style="font-size: 1.3rem; font-weight: 700; line-height: 1.2; color: var(--accent-red);">0</div>
         </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 10px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Última Ocorrência</div>
-          <div id="lastRegTime" style="font-size: 1.05rem; font-weight: 600; line-height: 1.2; color: #f87171; font-family: monospace;">-</div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
+          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Hora da 1ª ocorrência de regressão na rodada">1ª Ocorrência</div>
+          <div id="firstRegTime" style="font-size: 0.98rem; font-weight: 600; line-height: 1.2; color: #fca5a5; font-family: monospace;">-</div>
+        </div>
+        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
+          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Hora da última ocorrência de regressão na rodada">Última Ocorrência</div>
+          <div id="lastRegTime" style="font-size: 0.98rem; font-weight: 600; line-height: 1.2; color: #f87171; font-family: monospace;">-</div>
         </div>
       </div>
     </div>
 
-    <!-- Card 4: Cache (SLAs Acumulados - Denso) -->
+    <!-- Card 4: SLA & Propagação (Matriz Duplo Critério TSE vs Akamai - Denso) -->
     <div class="stat-card stat-card-cache" style="padding: 10px 14px; border-left: 3px solid var(--accent-yellow); display: flex; flex-direction: column; justify-content: space-between;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 8px;">
-        <span class="stat-label" style="font-size: 0.70rem; margin: 0; white-space: nowrap;">Cache (SLAs Acumulados)</span>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; gap: 8px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <span class="stat-label" style="font-size: 0.76rem; font-weight: 700; color: #f8fafc; margin: 0; letter-spacing: 0.5px;">SLA</span>
+          <span id="badgeTolDessinc" style="font-size: 0.65rem; background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); padding: 2px 7px; border-radius: 4px; font-weight: 600;" title="Tolerância de Dessincronia do TSE entre geração na Origem e entrega na Réplica">Tolerância de Dessincronia: 90s (TSE)</span>
+          <span id="badgeTolProp" style="font-size: 0.65rem; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); padding: 2px 7px; border-radius: 4px; font-weight: 600;" title="Tolerância de Propagação interna Anycast da Akamai / CDN">Tolerância de Propagação: 60s (Akamai)</span>
+          <span id="badgeIncDesync" style="display: none; font-size: 0.65rem; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); padding: 2px 7px; border-radius: 4px; font-weight: 700; cursor: pointer;" onclick="openIncidentesDessincroniaModal()" title="Clique para inspecionar os incidentes de dessincronia">⚠️ 0 Incidentes</span>
+        </div>
         <div id="cardSlaPills" style="display: flex; gap: 4px; flex-wrap: nowrap; overflow-x: auto;">
           <button type="button" class="btn-sla-pill active" onclick="setCardSlaMode('CONSOLIDADO')" style="background: var(--accent-yellow); color: #000; font-weight: 700; border: none; padding: 1px 6px; border-radius: 4px; font-size: 0.62rem; cursor: pointer;">Consolidado</button>
         </div>
       </div>
-      <div style="display: flex; justify-content: space-between; gap: 6px; align-items: baseline; flex-wrap: nowrap;">
-        <div>
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Quantidade de arquivos com cache desatualizado neste exato instante">Atrasados</div>
-          <div id="countDesync" style="font-size: 1.25rem; font-weight: 700; line-height: 1.2; color: var(--accent-yellow);">0</div>
-        </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Tempo médio de sincronização dos arquivos">Média</div>
-          <div id="cacheAvg" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #fbbf24;">0m 00s</div>
-        </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="90% dos arquivos sincronizam neste tempo ou menos">P90</div>
-          <div id="cacheP90" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #fb923c;">0m 00s</div>
-        </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="95% dos arquivos sincronizam neste tempo ou menos">P95</div>
-          <div id="cacheP95" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #f87171;">0m 00s</div>
-        </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="99% dos arquivos sincronizam neste tempo ou menos">P99</div>
-          <div id="cacheP99" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #ef4444;">0m 00s</div>
-        </div>
-        <div style="border-left: 1px solid var(--border); padding-left: 8px;">
-          <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;" title="Tempo máximo de sincronização (100% dos arquivos)">P100</div>
-          <div id="cacheP100" style="font-size: 1.0rem; font-weight: 600; line-height: 1.2; color: #b91c1c;">0m 00s</div>
-        </div>
-      </div>
+      
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.72rem; margin-top: 1px;">
+        <thead>
+          <tr style="color: var(--text-muted); text-transform: uppercase; font-size: 0.62rem; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: right;">
+            <th style="text-align: left; padding: 2px 4px 4px 0; font-weight: 600; width: 27%;">STATUS</th>
+            <th style="padding: 2px 6px 4px 4px; font-weight: 600;">QTD</th>
+            <th style="padding: 2px 6px 4px 4px; font-weight: 600;">MÉDIA</th>
+            <th style="padding: 2px 6px 4px 4px; font-weight: 600;">P90</th>
+            <th style="padding: 2px 6px 4px 4px; font-weight: 600;">P95</th>
+            <th style="padding: 2px 6px 4px 4px; font-weight: 600;">P99</th>
+            <th style="padding: 2px 4px 4px 4px; font-weight: 600;">P100</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- LINHA 1: DESSINCRONIZADOS (TSE) -->
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); text-align: right;">
+            <td style="text-align: left; padding: 4px 4px 4px 0; font-weight: 700; color: #fbbf24; white-space: nowrap;">
+              <span title="Arquivos gerados na Origem mas ainda não entregues com essa versão na Réplica">DESSINCRONIZADOS</span>
+            </td>
+            <td style="padding: 4px 6px; font-weight: 700; color: #f8fafc;" id="rowDesyncQtd">0</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #fbbf24;" id="rowDesyncAvg">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #fb923c;" id="rowDesyncP90">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #f87171;" id="rowDesyncP95">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #ef4444;" id="rowDesyncP99">0m 00s</td>
+            <td style="padding: 4px; font-family: monospace; color: #b91c1c;" id="rowDesyncP100">0m 00s</td>
+          </tr>
+          <!-- LINHA 2: EM PROPAGAÇÃO (AKAMAI) -->
+          <tr style="text-align: right;">
+            <td style="text-align: left; padding: 4px 4px 4px 0; font-weight: 700; color: #38bdf8; white-space: nowrap;">
+              <span title="Arquivos recém-detectados na réplica em processo de convergência de borda na CDN">EM PROPAGAÇÃO</span>
+            </td>
+            <td style="padding: 4px 6px; font-weight: 700; color: #f8fafc;" id="rowPropQtd">0</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #38bdf8;" id="rowPropAvg">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #60a5fa;" id="rowPropP90">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #818cf8;" id="rowPropP95">0m 00s</td>
+            <td style="padding: 4px 6px; font-family: monospace; color: #a78bfa;" id="rowPropP99">0m 00s</td>
+            <td style="padding: 4px; font-family: monospace; color: #c084fc;" id="rowPropP100">0m 00s</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- ALIASES OCULTOS PARA COMPATIBILIDADE COM SCRIPTS DE TESTE -->
+      <span id="countDesync" style="display:none;">0</span>
+      <span id="cacheAvg" style="display:none;">0m 00s</span>
+      <span id="cacheP90" style="display:none;">0m 00s</span>
+      <span id="cacheP95" style="display:none;">0m 00s</span>
+      <span id="cacheP99" style="display:none;">0m 00s</span>
+      <span id="cacheP100" style="display:none;">0m 00s</span>
+
       <div id="cardSlaNodesSummary" style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.08); font-size: 0.63rem; color: var(--text-muted); display: flex; gap: 8px; overflow-x: auto; white-space: nowrap;">
       </div>
     </div>
@@ -6306,6 +6614,26 @@ function setElText(id, val) {
       const globalStats = data.todaySlaStats || { avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0, totalEvents: 0 };
       const replicaKeys = Object.keys(replicaStats);
 
+      // Atualiza badges de tolerância no cabeçalho do Card 4
+      const tolDessinc = data.toleranciaDessincroniaTse || 90;
+      const tolProp = data.toleranciaPropagacaoAkamai || 60;
+      const badgeTolDessinc = document.getElementById('badgeTolDessinc');
+      if (badgeTolDessinc) badgeTolDessinc.textContent = 'Tolerância de Dessincronia: ' + tolDessinc + 's (TSE)';
+      const badgeTolProp = document.getElementById('badgeTolProp');
+      if (badgeTolProp) badgeTolProp.textContent = 'Tolerância de Propagação: ' + tolProp + 's (Akamai)';
+
+      // Atualiza badge de incidentes de dessincronia
+      const incBadge = document.getElementById('badgeIncDesync');
+      const incCount = data.desyncStats?.incidentesCount || 0;
+      if (incBadge) {
+        if (incCount > 0) {
+          incBadge.textContent = '⚠️ ' + incCount + ' Incidente' + (incCount > 1 ? 's' : '') + ' de Dessincronia';
+          incBadge.style.display = 'inline-block';
+        } else {
+          incBadge.style.display = 'none';
+        }
+      }
+
       // Renderiza os botões pills para comutar Consolidado vs Nós Individuais
       if (pillsContainer) {
         const isCons = (currentCardSlaMode === 'CONSOLIDADO');
@@ -6349,21 +6677,49 @@ function setElText(id, val) {
         slas.sort((a, b) => a - b);
       }
 
+      const desyncGlobal = data.desyncStats || data.todaySlaStats || { qtd: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+      const propGlobal = data.propagationStats || { qtd: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+
+      let curDesync = (currentCardSlaMode === 'CONSOLIDADO' || !replicaStats[currentCardSlaMode]) ? desyncGlobal : (replicaStats[currentCardSlaMode].desyncStats || replicaStats[currentCardSlaMode]);
+      let curProp = (currentCardSlaMode === 'CONSOLIDADO' || !replicaStats[currentCardSlaMode]) ? propGlobal : (replicaStats[currentCardSlaMode].propagationStats || { qtd: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 });
+
       if (slas && slas.length > 0) {
         const avgSec = Math.round(slas.reduce((a, b) => a + b, 0) / slas.length);
+        const p90 = slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.90))];
+        const p95 = slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.95))];
+        const p99 = slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.99))];
+        const p100 = slas[slas.length - 1];
+
+        setElText('rowDesyncAvg', formatMinSec(avgSec));
+        setElText('rowDesyncP90', formatMinSec(p90));
+        setElText('rowDesyncP95', formatMinSec(p95));
+        setElText('rowDesyncP99', formatMinSec(p99));
+        setElText('rowDesyncP100', formatMinSec(p100));
+
         setElText('cacheAvg', formatMinSec(avgSec));
-        setElText('cacheP90', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.90))]));
-        setElText('cacheP95', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.95))]));
-        setElText('cacheP99', formatMinSec(slas[Math.min(slas.length - 1, Math.floor(slas.length * 0.99))]));
-        setElText('cacheP100', formatMinSec(slas[slas.length - 1]));
+        setElText('cacheP90', formatMinSec(p90));
+        setElText('cacheP95', formatMinSec(p95));
+        setElText('cacheP99', formatMinSec(p99));
+        setElText('cacheP100', formatMinSec(p100));
       } else {
-        const targetStats = (currentCardSlaMode === 'CONSOLIDADO' || !replicaStats[currentCardSlaMode]) ? globalStats : replicaStats[currentCardSlaMode];
-        setElText('cacheAvg', formatMinSec(targetStats.avgSec));
-        setElText('cacheP90', formatMinSec(targetStats.p90Sec));
-        setElText('cacheP95', formatMinSec(targetStats.p95Sec));
-        setElText('cacheP99', formatMinSec(targetStats.p99Sec));
-        setElText('cacheP100', formatMinSec(targetStats.p100Sec));
+        setElText('rowDesyncAvg', formatMinSec(curDesync.avgSec));
+        setElText('rowDesyncP90', formatMinSec(curDesync.p90Sec));
+        setElText('rowDesyncP95', formatMinSec(curDesync.p95Sec));
+        setElText('rowDesyncP99', formatMinSec(curDesync.p99Sec));
+        setElText('rowDesyncP100', formatMinSec(curDesync.p100Sec));
+
+        setElText('cacheAvg', formatMinSec(curDesync.avgSec));
+        setElText('cacheP90', formatMinSec(curDesync.p90Sec));
+        setElText('cacheP95', formatMinSec(curDesync.p95Sec));
+        setElText('cacheP99', formatMinSec(curDesync.p99Sec));
+        setElText('cacheP100', formatMinSec(curDesync.p100Sec));
       }
+
+      setElText('rowPropAvg', formatMinSec(curProp.avgSec));
+      setElText('rowPropP90', formatMinSec(curProp.p90Sec));
+      setElText('rowPropP95', formatMinSec(curProp.p95Sec));
+      setElText('rowPropP99', formatMinSec(curProp.p99Sec));
+      setElText('rowPropP100', formatMinSec(curProp.p100Sec));
     }
 
     function renderHeaderStats(data, filteredRows) {
@@ -6395,10 +6751,21 @@ function setElText(id, val) {
           thReplSt.innerHTML = repName + ' <span style="font-size:0.7rem; color:#38bdf8;">(Réplica)</span>';
         }
       }
+      function formatRegTimeOnly(val) {
+        if (!val || val === '-') return '-';
+        if (typeof val === 'string' && val.length === 8 && val.includes(':')) return val;
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return String(val);
+        return d.toLocaleTimeString('pt-BR');
+      }
+
       document.getElementById('countFiles').textContent = data.comparison.length;
       document.getElementById('countVisible').textContent = filteredRows ? filteredRows.length : data.comparison.length;
       document.getElementById('countRegTime').textContent = data.regressionsTimeCount || 0;
-      document.getElementById('lastRegTime').textContent = data.lastRegressionTime || '-';
+      const firstRegEl = document.getElementById('firstRegTime');
+      if (firstRegEl) firstRegEl.textContent = formatRegTimeOnly(data.firstRegressionTime);
+      const lastRegEl = document.getElementById('lastRegTime');
+      if (lastRegEl) lastRegEl.textContent = formatRegTimeOnly(data.lastRegressionTime);
 
       // Atualiza KPI de Atributos de Cache & TTL
       if (data.cacheStats) {
@@ -6416,9 +6783,10 @@ function setElText(id, val) {
 
       lastFilteredRows = filteredRows;
 
-      // 1. Quantidade de arquivos com cache atrasado AGORA (Consolidado ou Nó Específico)
+      // 1. Quantidade de arquivos dessincronizados e em propagação AGORA (Consolidado ou Nó Específico)
       const list = filteredRows || data.comparison;
       let desyncCount = 0;
+      let propCount = 0;
       for (const row of list) {
         if (currentCardSlaMode === 'CONSOLIDADO') {
           if (row.comparison.status === 'CACHE_ATRASADO') desyncCount++;
@@ -6431,8 +6799,16 @@ function setElText(id, val) {
             desyncCount++;
           }
         }
+        if (row.comparison && (row.comparison.status_ordem === 'EM_PROPAGACAO' || row.sim?.status === 'EM_PROPAGACAO')) {
+          propCount++;
+        }
       }
-      document.getElementById('countDesync').textContent = desyncCount;
+      if (propCount === 0 && data.propagationStats?.qtd) {
+        propCount = data.propagationStats.qtd;
+      }
+      setElText('countDesync', desyncCount);
+      setElText('rowDesyncQtd', desyncCount);
+      setElText('rowPropQtd', propCount);
 
       // 2. SLAs Acumulados (Consolidado vs Individual)
       renderCardSlaPillsAndStats(data, filteredRows);
@@ -7590,9 +7966,9 @@ function setElText(id, val) {
     function updateParamsSummary(cfg) {
       var el = document.getElementById('headerParamsSummary');
       if (el && cfg) {
-        var tolCache = cfg.tolerancia_cache_akamai_segundos || cfg.tolerancia_propagacao_segundos || 60;
-        var slaTse = cfg.sla_propagacao_tse_segundos || 90;
-        el.innerText = 'Matriz: ' + cfg.intervalo_matriz_segundos + 's | Réplicas: ' + cfg.intervalo_replicas_segundos + 's | Cache Akamai: ' + tolCache + 's | SLA TSE: ' + slaTse + 's';
+        var tolProp = cfg.tolerancia_propagacao_akamai_segundos || cfg.tolerancia_cache_akamai_segundos || cfg.tolerancia_propagacao_segundos || 60;
+        var tolDessinc = cfg.tolerancia_dessincronia_tse_segundos || cfg.sla_propagacao_tse_segundos || 90;
+        el.innerText = 'Matriz: ' + cfg.intervalo_matriz_segundos + 's | Réplicas: ' + cfg.intervalo_replicas_segundos + 's | Propagação Akamai: ' + tolProp + 's | Dessincronia TSE: ' + tolDessinc + 's';
       }
     }
 
@@ -8082,6 +8458,61 @@ function setElText(id, val) {
 
     function closeRegressoesModal() {
       document.getElementById('regressoesModal').style.display = 'none';
+    }
+
+    async function openIncidentesDessincroniaModal() {
+      document.getElementById('incidentesDessincroniaModal').style.display = 'flex';
+      await loadIncidentesDessincroniaData();
+    }
+
+    function closeIncidentesDessincroniaModal() {
+      document.getElementById('incidentesDessincroniaModal').style.display = 'none';
+    }
+
+    async function loadIncidentesDessincroniaData() {
+      const container = document.getElementById('incidentesDessincroniaContainer');
+      container.innerHTML = '<div style="text-align:center; padding:40px; color:#94a3b8; font-size:0.9rem;">⏳ Carregando incidentes de dessincronia do TSE...</div>';
+      try {
+        const res = await fetch('/api/incidentes-dessincronia');
+        const data = await res.json();
+        const list = data.incidentes || [];
+        document.getElementById('incDesyncTotalCount').textContent = list.length;
+        if (list.length === 0) {
+          container.innerHTML = '<div style="text-align:center; padding:40px; color:#10b981; font-size:0.9rem;">✅ Nenhum incidente de dessincronia registrado! Todos os arquivos analisados cumpriram a tolerância de 90s do TSE.</div>';
+          return;
+        }
+        let html = '<table style="width:100%; border-collapse:collapse; font-size:0.75rem; text-align:left;">';
+        html += '<thead><tr style="background:#1e293b; color:#94a3b8; border-bottom:1px solid #334155;">';
+        html += '<th style="padding:8px 10px;">ID</th>';
+        html += '<th style="padding:8px 10px;">Data/Hora</th>';
+        html += '<th style="padding:8px 10px;">Nó</th>';
+        html += '<th style="padding:8px 10px;">Arquivo</th>';
+        html += '<th style="padding:8px 10px;">Tempo Dessincronia</th>';
+        html += '<th style="padding:8px 10px;">Limite Tolerância</th>';
+        html += '<th style="padding:8px 10px;">Origem (DG/HG)</th>';
+        html += '<th style="padding:8px 10px;">Réplica (Last-Mod)</th>';
+        html += '<th style="padding:8px 10px;">Detalhes</th>';
+        html += '</tr></thead><tbody>';
+        for (const item of list) {
+          const d = new Date(item.timestamp_unix);
+          const dtStr = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR');
+          html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+          html += '<td style="padding:8px 10px; font-weight:700; color:#cbd5e1;">#' + item.id + '</td>';
+          html += '<td style="padding:8px 10px; font-family:monospace; color:#94a3b8;">' + dtStr + '</td>';
+          html += '<td style="padding:8px 10px;"><span style="background:#0284c7; color:#fff; padding:2px 6px; border-radius:4px; font-size:0.70rem; font-weight:700;">' + item.servidor + '</span></td>';
+          html += '<td style="padding:8px 10px; font-weight:600; color:#f8fafc; font-family:monospace;">' + item.arquivo.split('/').pop() + '<div style="font-size:0.65rem; color:#64748b;">' + item.arquivo + '</div></td>';
+          html += '<td style="padding:8px 10px; font-weight:700; color:#ef4444; font-family:monospace;">' + formatMinSec(item.tempo_dessincronia_segundos) + ' (' + item.tempo_dessincronia_segundos + 's)</td>';
+          html += '<td style="padding:8px 10px; color:#34d399; font-weight:600;">' + item.limite_tolerancia_segundos + 's</td>';
+          html += '<td style="padding:8px 10px; color:#fbbf24; font-family:monospace;">' + (item.dg_origem ? (item.dg_origem + ' ' + item.hg_origem) : '-') + '</td>';
+          html += '<td style="padding:8px 10px; color:#38bdf8; font-family:monospace;">' + (item.last_modified_replica || '-') + '</td>';
+          html += '<td style="padding:8px 10px; color:#94a3b8; font-size:0.70rem;">' + (item.detalhes || '-') + '</td>';
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (err) {
+        container.innerHTML = '<div style="text-align:center; padding:40px; color:#ef4444; font-size:0.9rem;">❌ Erro ao carregar incidentes de dessincronia: ' + err.message + '</div>';
+      }
     }
 
     let regModalPageSize = 50;
@@ -9455,7 +9886,7 @@ function setElText(id, val) {
 
           <div>
             <label style="display:block; font-size:0.82rem; font-weight:700; color:#38bdf8; margin-bottom:4px;">
-              3) Tolerância para Regressão de Cache (Critério Akamai)
+              3) Tolerância de Propagação (Critério Akamai)
             </label>
             <div style="display:flex; align-items:center; gap:8px;">
               <input id="cfgToleranciaCacheAkamai" type="number" min="5" max="300" step="5" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="60">
@@ -9463,20 +9894,20 @@ function setElText(id, val) {
               <input id="cfgToleranciaPropagacao" type="hidden" value="60">
             </div>
             <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
-              Janela máxima de convergência de borda da CDN (1 ciclo de renovação de TTL de 60s). Cronometrado a partir do momento em que o primeiro nó da CDN entrega a nova versão. Se um nó entregar versão antiga após 60s, é confirmada falha de integridade / regressão de cache (Ghost Cache).
+              Janela máxima tolerada para convergência interna de borda da CDN a partir da 1ª detecção da nova versão. Se versões antigas forem entregues após essa tolerância, configura-se formalmente Incidente Pericial de Regressão de Cache (Ghost Cache).
             </p>
           </div>
 
           <div>
             <label style="display:block; font-size:0.82rem; font-weight:700; color:#34d399; margin-bottom:4px;">
-              4) SLA Máximo de Propagação (Critério TSE)
+              4) Tolerância de Dessincronia (Critério TSE)
             </label>
             <div style="display:flex; align-items:center; gap:8px;">
               <input id="cfgSlaPropagacaoTse" type="number" min="10" max="600" step="5" style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#f8fafc; font-weight:600;" value="90">
               <span style="font-size:0.84rem; color:#94a3b8;">segundos (Padrão: 90s)</span>
             </div>
             <p style="font-size:0.74rem; color:#94a3b8; margin:4px 0 0 0;">
-              SLA de ponta a ponta do TSE para distribuição total dos arquivos totalizados a partir da publicação na Origem (HMG). Se a CDN levar mais tempo que este limite para buscar e replicar o arquivo da Origem, o descumprimento de SLA é registrado.
+              Limite máximo tolerado entre o carimbo interno de geração (dg/hg) na Origem e o primeiro Last-Modified retornado pela Réplica. Ultrapassar este limite gera Incidente de Dessincronia (descumprimento de SLA TSE), segregado das regressões de cache.
             </p>
           </div>
         </div>
@@ -9741,6 +10172,42 @@ function setElText(id, val) {
 
     </div>
   </div>
+
+  <!-- MODAL DE AUDITORIA DE INCIDENTES DE DESSINCRONIA (TSE) -->
+  <div id="incidentesDessincroniaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
+    <div style="background:#1e293b; border:1px solid #475569; border-radius:14px; width:94%; max-width:1100px; height:85vh; padding:20px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); display:flex; flex-direction:column; color:#f8fafc; box-sizing:border-box;">
+      
+      <!-- Cabeçalho da Modal -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:12px; flex-shrink:0;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <h3 style="margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+            ⚠️ Incidentes de Dessincronia (Descumprimento de Tolerância TSE > 90s)
+          </h3>
+          <span class="status-badge status-danger" id="incDesyncTotalCount" style="font-size:0.75rem; padding:2px 8px; border-radius:9999px;">0</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <a href="/download/csv-incidentes-dessincronia" class="btn btn-outline" style="padding:4px 12px; font-size:0.75rem; text-decoration:none;">📥 Baixar CSV</a>
+          <button onclick="closeIncidentesDessincroniaModal()" style="background:transparent; border:none; color:#94a3b8; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+        </div>
+      </div>
+
+      <!-- Descrição Informativa -->
+      <div style="background:rgba(234, 179, 8, 0.1); border:1px solid rgba(234, 179, 8, 0.3); border-radius:8px; padding:8px 12px; font-size:0.76rem; color:#fde047; margin-bottom:12px; flex-shrink:0; line-height:1.4;">
+        ℹ️ <strong>Segregação Pericial:</strong> Ocorrências registradas nesta lista referem-se a atrasos de replicação que ultrapassaram a Tolerância de Dessincronia do TSE. Por não constituírem retrocesso temporal de dados, <strong>NÃO poluem o registro pericial de Regressões de Cache (Ghost Cache)</strong>.
+      </div>
+
+      <!-- Conteúdo com Tabela e Scroll -->
+      <div id="incidentesDessincroniaContainer" style="flex:1; min-height:0; overflow-y:auto; background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px;">
+        <!-- Preenchido via JavaScript -->
+      </div>
+
+      <!-- Rodapé da Modal -->
+      <div style="display:flex; justify-content:flex-end; align-items:center; margin-top:10px; border-top:1px solid #334155; padding-top:8px; flex-shrink:0;">
+        <button onclick="closeIncidentesDessincroniaModal()" class="btn btn-outline" style="padding:5px 16px; font-size:0.82rem;">Fechar</button>
+      </div>
+
+    </div>
+  </div>
 </body>
 </html>`;
 
@@ -9935,8 +10402,25 @@ function getTodaySyncData() {
   }
   const rodada = getActiveRodada();
   const rodadaStartUnix = rodada ? rodada.inicio_unix : getTodayMidnightUnix();
-  
+  const tolDessinc = getConfig('tolerancia_dessincronia_tse_segundos', 90);
+  const tolProp = getConfig('tolerancia_propagacao_akamai_segundos', 60);
+
+  const calcStats = (times, activeQtd = 0, incCount = 0) => {
+    const sorted = [...times].sort((a, b) => a - b);
+    return {
+      qtd: activeQtd || 0,
+      totalEvents: sorted.length,
+      incidentesCount: incCount,
+      avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
+      p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
+      p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
+      p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
+      p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
+    };
+  };
+
   try {
+    // 1) DESSINCRONIZAÇÃO (TSE): trânsito First-Seen entre 1ª detecção na Origem e 1ª entrega na réplica
     const syncRows = db.prepare(`
       WITH hmg_first AS (
         SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
@@ -9953,7 +10437,10 @@ function getTodaySyncData() {
       SELECT 
         s.servidor,
         h.arquivo,
-        CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
+        CASE 
+          WHEN s.s_first < h.h_first THEN 0 
+          ELSE ROUND((s.s_first - h.h_first) / 1000.0) 
+        END as sync_sec
       FROM hmg_first h
       JOIN sim_first s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
     `).all(rodadaStartUnix, rodadaStartUnix);
@@ -9968,38 +10455,112 @@ function getTodaySyncData() {
       serverSyncTimes[srv].push(row.sync_sec);
     }
 
-    const calcStats = (times) => {
-      const sorted = [...times].sort((a, b) => a - b);
-      return {
-        totalEvents: sorted.length,
-        avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
-        p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
-        p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
-        p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
-        p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
-      };
-    };
-
-    const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
-    const globalTodayStats = calcStats(allTimes);
-
-    const replicaSlaStats = {};
-    for (const srv of Object.keys(serverSyncTimes)) {
-      replicaSlaStats[srv] = calcStats(serverSyncTimes[srv]);
-    }
+    // Conta arquivos ativamente dessincronizados no instante atual
+    let activeDesyncCount = 0;
+    const originServer = getOriginServer();
+    const originKey = originServer ? originServer.chave : 'HMG';
     const replicas = getReplicaServers();
-    for (const rep of replicas) {
-      if (!replicaSlaStats[rep.chave]) {
-        replicaSlaStats[rep.chave] = { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 };
+    const primaryReplicaKey = replicas.length > 0 ? replicas[0].chave : (originKey === 'HMG' ? 'SIM' : 'REPLICA');
+
+    for (const relPath of Array.from(trackedFiles)) {
+      const origState = serverStates[originKey]?.get(relPath);
+      const repState = serverStates[primaryReplicaKey]?.get(relPath);
+      if (origState && (!repState || (origState.genTime !== null && repState.genTime !== null && origState.genTime > repState.genTime) || (origState.idgNum !== null && repState.idgNum !== null && origState.idgNum > repState.idgNum))) {
+        activeDesyncCount++;
       }
     }
 
-    cachedTodaySync = { todaySyncByFile, globalTodayStats, replicaSlaStats };
+    // Incidentes de dessincronia na rodada
+    let desyncIncidentsCount = 0;
+    try {
+      const incRow = db.prepare('SELECT COUNT(*) as cnt FROM incidentes_dessincronia WHERE timestamp_unix >= ?').get(rodadaStartUnix);
+      desyncIncidentsCount = incRow ? incRow.cnt : 0;
+    } catch (e) {}
+
+    const allDesyncTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+    const desyncStats = calcStats(allDesyncTimes, activeDesyncCount, desyncIncidentsCount);
+    const globalTodayStats = desyncStats; // retrocompatibilidade
+
+    // 2) EM PROPAGAÇÃO (AKAMAI): convergência de borda / oscilação transitória
+    const emPropRows = db.prepare(`
+      SELECT servidor, arquivo, timestamp_unix, detalhes 
+      FROM leituras 
+      WHERE status_ordem = 'EM_PROPAGACAO' AND timestamp_unix >= ?
+    `).all(rodadaStartUnix);
+
+    const propTimes = [];
+    const serverPropTimes = {};
+    for (const r of emPropRows) {
+      if (r.detalhes) {
+        const m = r.detalhes.match(/(\d+)\s*s\s+decorridos/i);
+        if (m) {
+          const sec = parseInt(m[1], 10);
+          propTimes.push(sec);
+          const srv = r.servidor || 'SIM';
+          if (!serverPropTimes[srv]) serverPropTimes[srv] = [];
+          serverPropTimes[srv].push(sec);
+        }
+      }
+    }
+
+    // Incorpora durações ativas do tracker em memória
+    let activePropCount = 0;
+    for (const [propKey, pItem] of filePropagationTracker.entries()) {
+      if (pItem.isPropagating && (now - pItem.lastSeenAt <= tolProp * 1000)) {
+        activePropCount++;
+        if (pItem.propagationSec > 0) {
+          propTimes.push(pItem.propagationSec);
+          const srv = propKey.split(':')[0] || 'SIM';
+          if (!serverPropTimes[srv]) serverPropTimes[srv] = [];
+          serverPropTimes[srv].push(pItem.propagationSec);
+        }
+      }
+    }
+
+    const propagationStats = calcStats(propTimes, activePropCount, 0);
+
+    // Estatísticas por réplica individual
+    const replicaSlaStats = {};
+    for (const srv of Object.keys(serverSyncTimes)) {
+      const srvDesync = calcStats(serverSyncTimes[srv], 0, 0);
+      const srvProp = calcStats(serverPropTimes[srv] || [], 0, 0);
+      replicaSlaStats[srv] = {
+        ...srvDesync,
+        desyncStats: srvDesync,
+        propagationStats: srvProp
+      };
+    }
+    for (const rep of replicas) {
+      if (!replicaSlaStats[rep.chave]) {
+        const emptyStats = { qtd: 0, totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0, incidentesCount: 0 };
+        replicaSlaStats[rep.chave] = {
+          ...emptyStats,
+          desyncStats: emptyStats,
+          propagationStats: emptyStats
+        };
+      }
+    }
+
+    cachedTodaySync = {
+      todaySyncByFile,
+      globalTodayStats,
+      desyncStats,
+      propagationStats,
+      replicaSlaStats,
+      toleranciaDessincroniaTse: tolDessinc,
+      toleranciaPropagacaoAkamai: tolProp
+    };
   } catch(e) {
+    console.error('Erro em getTodaySyncData:', e.message);
+    const emptyStats = { qtd: 0, totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0, incidentesCount: 0 };
     cachedTodaySync = {
       todaySyncByFile: {},
-      globalTodayStats: { totalEvents: 0, avgSec: 0, p90Sec: 0, p95Sec: 0, p99Sec: 0, p100Sec: 0 },
-      replicaSlaStats: {}
+      globalTodayStats: emptyStats,
+      desyncStats: emptyStats,
+      propagationStats: emptyStats,
+      replicaSlaStats: {},
+      toleranciaDessincroniaTse: tolDessinc,
+      toleranciaPropagacaoAkamai: tolProp
     };
   }
   lastTodaySyncFetch = now;
@@ -10053,7 +10614,24 @@ function buildHistoricalComparisonPayload(rodadaId) {
     fileSet.add(r.arquivo);
   }
 
-  // SLA da rodada histórica
+  // SLA da rodada histórica (Duplo Critério: Dessincronia TSE vs Propagação Akamai)
+  const tolDessinc = getConfig('tolerancia_dessincronia_tse_segundos', 90);
+  const tolProp = getConfig('tolerancia_propagacao_akamai_segundos', 60);
+
+  const calcStats = (times, activeQtd = 0, incCount = 0) => {
+    const sorted = [...times].sort((a, b) => a - b);
+    return {
+      qtd: activeQtd || 0,
+      totalEvents: sorted.length,
+      incidentesCount: incCount,
+      avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
+      p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
+      p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
+      p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
+      p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
+    };
+  };
+
   const sqlSla = `
     WITH hmg_first AS (
       SELECT arquivo, dg, hg, MIN(timestamp_unix) as h_first
@@ -10070,7 +10648,10 @@ function buildHistoricalComparisonPayload(rodadaId) {
     SELECT 
       s.servidor,
       h.arquivo,
-      CASE WHEN s.s_first < h.h_first THEN 0 ELSE ROUND((s.s_first - h.h_first) / 1000.0) END as sync_sec
+      CASE 
+        WHEN s.s_first < h.h_first THEN 0 
+        ELSE ROUND((s.s_first - h.h_first) / 1000.0) 
+      END as sync_sec
     FROM hmg_first h
     JOIN sim_first s ON h.arquivo = s.arquivo AND h.dg = s.dg AND h.hg = s.hg
   `;
@@ -10084,22 +10665,51 @@ function buildHistoricalComparisonPayload(rodadaId) {
     if (!serverSyncTimes[srv]) serverSyncTimes[srv] = [];
     serverSyncTimes[srv].push(row.sync_sec);
   }
-  const calcStats = (times) => {
-    const sorted = [...times].sort((a, b) => a - b);
-    return {
-      totalEvents: sorted.length,
-      avgSec: sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0,
-      p90Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.90)] : 0,
-      p95Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0,
-      p99Sec: sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0,
-      p100Sec: sorted.length ? sorted[sorted.length - 1] : 0
-    };
-  };
-  const allTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
-  const todaySlaStats = calcStats(allTimes);
+
+  // Incidentes de dessincronia no período
+  let desyncIncidentsCount = 0;
+  try {
+    const incRow = db.prepare('SELECT COUNT(*) as cnt FROM incidentes_dessincronia WHERE timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)').get(rStartUnix, rEndUnix, rEndUnix);
+    desyncIncidentsCount = incRow ? incRow.cnt : 0;
+  } catch (e) {}
+
+  const allDesyncTimes = syncRows.map(r => r.sync_sec).sort((a, b) => a - b);
+  const desyncStats = calcStats(allDesyncTimes, 0, desyncIncidentsCount);
+  const todaySlaStats = desyncStats;
+
+  // Em Propagação histórico
+  const emPropRows = db.prepare(`
+    SELECT servidor, arquivo, timestamp_unix, detalhes 
+    FROM leituras 
+    WHERE status_ordem = 'EM_PROPAGACAO' AND timestamp_unix >= ? AND (? IS NULL OR timestamp_unix <= ?)
+  `).all(rStartUnix, rEndUnix, rEndUnix);
+  const propTimes = [];
+  const serverPropTimes = {};
+  const uniquePropFiles = new Set();
+  for (const r of emPropRows) {
+    uniquePropFiles.add(r.arquivo);
+    if (r.detalhes) {
+      const m = r.detalhes.match(/(\d+)\s*s\s+decorridos/i);
+      if (m) {
+        const sec = parseInt(m[1], 10);
+        propTimes.push(sec);
+        const srv = r.servidor || 'SIM';
+        if (!serverPropTimes[srv]) serverPropTimes[srv] = [];
+        serverPropTimes[srv].push(sec);
+      }
+    }
+  }
+  const propagationStats = calcStats(propTimes, uniquePropFiles.size, 0);
+
   const replicaSlaStats = {};
   for (const srv of Object.keys(serverSyncTimes)) {
-    replicaSlaStats[srv] = calcStats(serverSyncTimes[srv]);
+    const srvDesync = calcStats(serverSyncTimes[srv], 0, 0);
+    const srvProp = calcStats(serverPropTimes[srv] || [], 0, 0);
+    replicaSlaStats[srv] = {
+      ...srvDesync,
+      desyncStats: srvDesync,
+      propagationStats: srvProp
+    };
   }
 
   const comparisonList = [];
@@ -10308,7 +10918,19 @@ function buildHistoricalComparisonPayload(rodadaId) {
   };
 
   const regCountRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?)`).get(rStartIso, rEndIso, rEndIso);
-  const lastRegRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE (criterio = 'TEMPORAL (DG/HG)' OR motivo LIKE 'REGRESSÃO TEMPORAL%') AND timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?) ORDER BY id DESC LIMIT 1`).get(rStartIso, rEndIso, rEndIso);
+  const lastRegRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?) ORDER BY id DESC LIMIT 1`).get(rStartIso, rEndIso, rEndIso);
+  const firstRegRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE timestamp_iso >= ? AND (? IS NULL OR timestamp_iso <= ?) ORDER BY id ASC LIMIT 1`).get(rStartIso, rEndIso, rEndIso);
+
+  let lastRegressionTime = '-';
+  if (lastRegRow && lastRegRow.timestamp_iso) {
+    const d = new Date(lastRegRow.timestamp_iso);
+    lastRegressionTime = d.toLocaleTimeString('pt-BR');
+  }
+  let firstRegressionTime = '-';
+  if (firstRegRow && firstRegRow.timestamp_iso) {
+    const d = new Date(firstRegRow.timestamp_iso);
+    firstRegressionTime = d.toLocaleTimeString('pt-BR');
+  }
 
   return {
     servers: getActiveServers(),
@@ -10318,9 +10940,14 @@ function buildHistoricalComparisonPayload(rodadaId) {
     comparison: comparisonList,
     recentLogs: [],
     regressionsTimeCount: regCountRow ? regCountRow.cnt : 0,
-    lastRegressionTime: lastRegRow ? lastRegRow.timestamp_iso : '-',
+    firstRegressionTime,
+    lastRegressionTime,
     todaySyncByFile,
     todaySlaStats,
+    desyncStats,
+    propagationStats,
+    toleranciaDessincroniaTse: tolDessinc,
+    toleranciaPropagacaoAkamai: tolProp,
     replicaSlaStats,
     cacheStats,
     activeRodada: rFound,
@@ -10374,18 +11001,24 @@ function getComparisonPayload(rodadaId = null) {
 
   let regressionsTimeCount = 0;
   let lastRegressionTime = '-';
+  let firstRegressionTime = '-';
   const rodadaStartIso = activeRodada ? activeRodada.inicio_iso : new Date(getTodayMidnightUnix()).toISOString();
   try {
     const timeRow = db.prepare(`SELECT COUNT(*) as cnt FROM regressoes WHERE timestamp_iso >= ?`).get(rodadaStartIso);
     regressionsTimeCount = timeRow ? timeRow.cnt : 0;
-    const lastRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE (criterio = 'TEMPORAL (DG/HG)' OR motivo LIKE 'REGRESSÃO TEMPORAL%') AND timestamp_iso >= ? ORDER BY id DESC LIMIT 1`).get(rodadaStartIso);
+    const lastRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE timestamp_iso >= ? ORDER BY id DESC LIMIT 1`).get(rodadaStartIso);
     if (lastRow && lastRow.timestamp_iso) {
       const d = new Date(lastRow.timestamp_iso);
       lastRegressionTime = d.toLocaleTimeString('pt-BR');
     }
+    const firstRow = db.prepare(`SELECT timestamp_iso FROM regressoes WHERE timestamp_iso >= ? ORDER BY id ASC LIMIT 1`).get(rodadaStartIso);
+    if (firstRow && firstRow.timestamp_iso) {
+      const d = new Date(firstRow.timestamp_iso);
+      firstRegressionTime = d.toLocaleTimeString('pt-BR');
+    }
   } catch (e) {}
 
-  const { todaySyncByFile, globalTodayStats, replicaSlaStats } = getTodaySyncData();
+  const { todaySyncByFile, globalTodayStats, desyncStats, propagationStats, replicaSlaStats, toleranciaDessincroniaTse, toleranciaPropagacaoAkamai } = getTodaySyncData();
 
   let simTtlSum = 0, simTtlCount = 0, simTtlMin = null, simTtlMax = null;
   let cdnHits = 0, cdnTotal = 0;
@@ -10422,9 +11055,14 @@ function getComparisonPayload(rodadaId = null) {
     comparison: comparisonList,
     recentLogs: recentLogs.slice(0, 60),
     regressionsTimeCount,
+    firstRegressionTime,
     lastRegressionTime,
     todaySyncByFile,
     todaySlaStats: globalTodayStats,
+    desyncStats,
+    propagationStats,
+    toleranciaDessincroniaTse,
+    toleranciaPropagacaoAkamai,
     replicaSlaStats,
     cacheStats,
     activeRodada: activeRodada,
@@ -11349,6 +11987,40 @@ function startDashboardServer() {
       return;
     }
 
+    if (url.pathname === '/download/csv-incidentes-dessincronia' || url.pathname === '/export/incidentes-dessincronia-csv') {
+      if (fs.existsSync(DESYNC_INCIDENTS_CSV)) {
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="incidentes_dessincronia.csv"'
+        });
+        res.end(fs.readFileSync(DESYNC_INCIDENTS_CSV, 'utf8'));
+      } else {
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="incidentes_dessincronia.csv"'
+        });
+        res.end('timestamp_iso,servidor,arquivo,tempo_dessincronia_segundos,limite_tolerancia_segundos,dg_origem,hg_origem,last_modified_replica,detalhes\n');
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/incidentes-dessincronia' && req.method === 'GET') {
+      try {
+        const limitParam = url.searchParams.get('limit');
+        const limit = limitParam !== null ? parseInt(limitParam, 10) : 1000;
+        const rows = db.prepare('SELECT * FROM incidentes_dessincronia ORDER BY id DESC LIMIT ?').all(limit);
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ ok: true, total: rows.length, incidentes: rows }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+      return;
+    }
+
 
     if (url.pathname === '/api/comparison') {
       const rodadaId = url.searchParams.get('rodadaId');
@@ -11495,6 +12167,10 @@ async function start() {
   console.log(`Pasta Evidências:     ${EVIDENCIAS_DIR}`);
   console.log(`Dossiê HTML:          ${REPORT_HTML}`);
   console.log(`Dashboard Web:        http://127.0.0.1:${DASHBOARD_PORT}`);
+  console.log(`CSV Incidentes TSE:   ${DESYNC_INCIDENTS_CSV}`);
+
+  const initialKpiStats = getTodaySyncData();
+  console.log('\n' + renderTerminalKpiBox(initialKpiStats) + '\n');
 
   await syncTabs();
 
@@ -11505,12 +12181,18 @@ async function start() {
   await runWorkerPool(allList, 15);
 
   // Inicializa os loops de polling desacoplados e independentes
-  console.log(`${CYAN}Iniciando agendamento independente: Matriz (${getConfig('intervalo_matriz_segundos', 10)}s) | Réplicas (${getConfig('intervalo_replicas_segundos', 10)}s) | Tolerância CDN (${getConfig('tolerancia_propagacao_segundos', 90)}s)...${RESET}`);
+  console.log(`${CYAN}Iniciando agendamento independente: Matriz (${getConfig('intervalo_matriz_segundos', 10)}s) | Réplicas (${getConfig('intervalo_replicas_segundos', 10)}s) | Propagação Akamai (${getConfig('tolerancia_propagacao_akamai_segundos', 60)}s) | Dessincronia TSE (${getConfig('tolerancia_dessincronia_tse_segundos', 90)}s)...${RESET}`);
   scheduleOriginPolling();
   scheduleReplicaPolling();
 
   setInterval(syncTabs, 10000);
   setInterval(checkDayRollover, 30000);
+  setInterval(() => {
+    try {
+      const st = getTodaySyncData();
+      console.log('\n' + renderTerminalKpiBox(st) + '\n');
+    } catch {}
+  }, 300000);
   setInterval(async () => {
     await discoverAvailableElections();
     updateTrackedCatalog();

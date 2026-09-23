@@ -5,6 +5,35 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 O formato é baseado no [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
 e este projeto adere ao [Semantic Versioning (SemVer)](https://semver.org/lang/pt-BR/).
 
+## [1.0.0.9] - 2026-09-22 - Redesenho Unificado de SLA & Sincronização, Matriz de Convergência e Segregação de Incidentes de Dessincronia
+
+### Adicionado
+- **Redesenho Unificado da Matriz de SLA (2 Linhas x 7 Colunas) no Dashboard, Console e Dossiê:**
+  - Padronização em formato matricial visual (`STATUS | QTD | MÉDIA | P90 | P95 | P99 | P100`) cobrindo as duas dimensões operacionais de sincronização:
+    - **Linha 1: `DESSINCRONIZADOS` (Tolerância TSE: 90s):** Arquivos gerados na Origem (`dg/hg`) pendentes de entrega pela réplica (`Last-Modified`).
+    - **Linha 2: `EM PROPAGAÇÃO` (Tolerância Akamai: 60s):** Arquivos recém-detectados na réplica em convergência Anycast entre PoPs/lâminas de borda.
+  - Box pericial idêntico renderizado no console terminal (moldura ASCII alinhada em 87 caracteres) na inicialização do monitor e ciclicamente a cada 5 minutos.
+- **Segregação Forense Estrita entre Incidentes de Dessincronia e Regressões de Cache:**
+  - **Incidente de Dessincronia (Critério TSE):** Quando o tempo decorrido entre a geração na Origem e a entrega da réplica ultrapassa a tolerância de 90s, é registrado formalmente como **Incidente de Dessincronia**.
+  - Criada tabela dedicada `incidentes_dessincronia` no SQLite (com índices em `timestamp_unix` e `arquivo`) e log contínuo em `incidentes_dessincronia.csv`.
+  - **Isolamento de Causa Raiz:** Ocorrências de estouro de SLA de entrega da Origem não poluem a tabela `regressoes` nem o dossiê de anomalias de borda, garantindo precisão pericial na identificação de gargalos.
+  - **Regressão de Cache (Critério Akamai):** Ocorrências em que nós de borda retrocedem para versões antigas após decorridos mais de 60s da detecção da nova versão continuam sendo registradas estritamente em `regressoes` como Ghost Cache.
+- **Interface Web e Endpoints REST para Auditoria de Dessincronia:**
+  - Novo modal interativo no Dashboard: **`⚠️ Incidentes de Dessincronia de Cache (Tolerância TSE > 90s)`**, com busca dinâmica, badges de tempo de atraso e links para os arquivos na Origem e Réplica.
+  - Novos endpoints: `GET /api/incidentes-dessincronia` e `GET /download/csv-incidentes-dessincronia` (alias `/export/incidentes-dessincronia-csv`).
+  - Badge visual clicável no Card 4 indicando o total de incidentes de dessincronia com atalho para abertura do modal.
+- **Renomeação Sistêmica de Parâmetros e Harmonização de Textos:**
+  - Parâmetro 3: Renomeado de *Tolerância para Regressão de Cache (Critério Akamai)* para `3) Tolerância de Propagação (Critério Akamai)` (padrão: 60s).
+  - Parâmetro 4: Renomeado de *SLA Máximo de Propagação (Critério TSE)* para `4) Tolerância de Dessincronia (Critério TSE)` (padrão: 90s).
+  - Atualização do resumo do cabeçalho: `Matriz: 10s | Réplicas: 10s | Propagação Akamai: 60s | Dessincronia TSE: 90s`.
+  - Atualização dos textos de ajuda metodológica nos tooltips do Dashboard e no laudo pericial `relatorio_evidencias.html`.
+- **Validação e Instalação Automatizada de Dependências no Script de Inicialização:**
+  - Implementada verificação inteligente de presença e versão do Node.js (requer >= 22.5.0 para `node:sqlite`) em `iniciar_monitor.ps1`.
+  - Instalação automatizada com fallback duplo (`winget` e download assistido do `.msi` oficial da Node.js Foundation).
+  - Recarregamento transparente do `$env:PATH` na sessão ativa do PowerShell.
+
+---
+
 ## [1.0.0.8] - 2026-09-22 - Correção de Rastreamento de Réplicas no fileSyncTracker e Suporte a URLs de Aplicação
 
 ### Corrigido

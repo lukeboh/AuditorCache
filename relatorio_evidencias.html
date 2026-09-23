@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dossiê Técnico Forense v1.0.0.7: Fonte HMG vs Cache SIM (TDTot TSE)</title>
+  <title>Dossiê Técnico Forense v1.0.0.9: Fonte HMG vs Cache SIM (TDTot TSE)</title>
   <script>
     (function() {
       try {
@@ -235,7 +235,7 @@
   <div id="topProgressBar"></div>
   <header>
     <div>
-      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.0.7</span></h1>
+      <h1>🗳️ Dossiê Técnico Forense <span class="badge badge-sync" style="font-size: 0.72rem; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">v1.0.0.9</span></h1>
       <div style="font-size: 0.80rem; color: var(--text-muted); margin-top: 4px;">
         Comparativo Contínuo: <strong style="color: #c084fc;">HMG (Fonte/Origem)</strong> vs <strong style="color: #38bdf8;">SIM (Cache/CDN Akamai)</strong> | Repositório: <code>tdtot_auditoria.db</code>
       </div>
@@ -384,7 +384,7 @@
         <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'regs')" title="Definição do indicador">ℹ️</button>
       </div>
       <div class="stat-value" id="kpiRegs" style="color: #f87171;">0</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">1ª: <span id="kpiFirstReg" style="color: #fca5a5;">-</span> | Última: <span id="kpiLastReg" style="color: #fca5a5;">-</span></div>
     </div>
     <div class="stat-card" style="border-left: 3px solid #f59e0b;">
       <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
@@ -396,9 +396,9 @@
     </div>
     <div class="stat-card" style="border-left: 3px solid #10b981;">
       <div class="stat-label" style="display: flex; justify-content: space-between; align-items: center;">
-        <span>SLA Sync Cache (DG/HG)</span>
+        <span style="font-weight: 700;">SLA Duplo Critério</span>
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span id="slaScopeLabel" style="color: #34d399;">Hoje</span>
+          <span style="font-size: 0.65rem; color: #34d399;">TSE: 90s | Akamai: 60s</span>
           <button type="button" class="kpi-info-btn" onclick="openKpiHelp(event, 'sla')" title="Definição do indicador">ℹ️</button>
         </div>
       </div>
@@ -976,12 +976,12 @@
         body: '<p><strong>O que representa:</strong> Total de anomalias periciais detectadas no ciclo/rodada em que o nó de cache (SIM/Akamai) ou a própria origem retornou dados cronologicamente ou quantitativamente inferiores a um estado anterior já validado (recuo de DG/HG, redução de votos/seções ou retrocesso de IDG).</p><p><strong>Carimbo "Última":</strong> Exibe a data e o horário exato da ocorrência mais recente registrada no banco de dados no formato estrito <code>dd/MM/yyyy - HH:mm:ss</code>.</p>'
       },
       desync: {
-        title: '⏳ Cache Atrasado (Defasagem Borda vs Origem)',
-        body: '<p><strong>O que representa:</strong> Quantidade de arquivos em que a <strong>Origem (HMG)</strong> já disponibilizou uma versão mais recente (data/hora de geração DG/HG mais nova ou número sequencial IDG superior), porém a <strong>Réplica de Cache (SIM / Akamai)</strong> continua entregando uma versão anterior ao eleitor/usuário.</p><p><strong>Por que pode marcar 100% (ex: 142/142)?</strong><br>Quando a Origem (HMG) totaliza uma nova rodada e os nós de Cache (SIM) deixam de receber atualizações ou o simulador é paralisado (por exemplo, na noite de 11/09 às 20:04 a origem atualizou, enquanto o nó SIM parou às 19:31), todos os arquivos que tiveram novos dados na origem ficam pendentes de sincronização na borda, resultando em 100% de defasagem legítima detectada pela auditoria.</p>'
+        title: '⏳ Dessincronizados (Critério TSE) & Tolerância de 90s',
+        body: '<p><strong>O que representa:</strong> Arquivos gerados na <strong>Origem (HMG)</strong> cuja versão mais recente (DG/HG) ainda não foi entregue pela <strong>Réplica (SIM / Akamai)</strong>.</p><p><strong>Cálculo do Tempo:</strong> Cronometrado desde o carimbo interno de geração (<code>dg/hg</code>) na Origem até o momento da primeira detecção (cabeçalho <code>Last-Modified</code>) na Réplica.</p><p><strong>🚨 Geração de Incidente de Dessincronia:</strong> Caso esse tempo exceda a tolerância de <strong>90s (TSE)</strong>, é formalmente registrado um <strong>Incidente de Dessincronia</strong>. <em>Atenção:</em> Este incidente NÃO é uma regressão de cache, pois os dados não recuaram, apenas atrasaram na saída da origem.</p>'
       },
       sla: {
-        title: '⚡ SLA de Sincronização de Cache (DG/HG)',
-        body: '<p><strong>O que representa:</strong> Mede o tempo decorrido (em segundos/minutos) entre a geração do arquivo na Origem HMG e sua efetiva disponibilidade capturada na Réplica SIM (Cache Akamai).</p><p><strong>Métricas:</strong><ul><li><strong>MÉDIA:</strong> Tempo médio de propagação dos arquivos na rodada.</li><li><strong>P90, P95, P99:</strong> Percentis de latência (90%, 95% e 99% das atualizações foram sincronizadas dentro deste limite de tempo).</li></ul></p><p><em>Nota:</em> Em rodadas sem alterações concomitantes nos dois ambientes, o indicador exibe 0m 00s.</p>'
+        title: '⚡ SLA de Sincronização e Propagação (Duplo Critério)',
+        body: '<p><strong>Matriz de Duplo Critério:</strong><ul><li><strong>1. DESSINCRONIZADOS (TSE):</strong> Mede o tempo desde a geração do arquivo na Origem até sua primeira entrega na Réplica (Tolerância: 90s). Se ultrapassar, gera <em>Incidente de Dessincronia</em>.</li><li><strong>2. EM PROPAGAÇÃO (Akamai):</strong> Mede a convergência interna entre lâminas Anycast da CDN a partir da 1ª detecção da versão nova (Tolerância: 60s). Se versões antigas forem entregues após 60s, gera <em>Incidente Pericial de Regressão de Cache (Ghost Cache)</em>.</li></ul></p><p><strong>Distribuição Estatística:</strong> Exibe Quantidade ativa (QTD), MÉDIA e percentis P90, P95, P99 e P100 para ambos os estados na rodada.</p>'
       },
       http: {
         title: '🌐 Atributos HTTP & Edge Cache (Akamai)',
@@ -1113,16 +1113,19 @@
       const tabRegsBadge = document.getElementById('tabRegsBadge');
       if (tabRegsBadge) tabRegsBadge.textContent = filteredRegs.length;
 
+      const kpiFirstRegEl = document.getElementById('kpiFirstReg');
       const kpiLastRegEl = document.getElementById('kpiLastReg');
-      if (kpiLastRegEl) {
+      if (kpiLastRegEl || kpiFirstRegEl) {
         if (filteredRegs.length > 0) {
-          const firstReg = filteredRegs[0];
-          const timeStr = firstReg.timestamp_iso || firstReg.call_time_iso;
-          kpiLastRegEl.textContent = formatDateTimeFull(timeStr || compData.lastRegressionTime);
-        } else if (compData.lastRegressionTime && compData.lastRegressionTime !== '-') {
-          kpiLastRegEl.textContent = formatDateTimeFull(compData.lastRegressionTime);
+          const latestReg = filteredRegs[0];
+          const oldestReg = filteredRegs[filteredRegs.length - 1];
+          const latestTime = latestReg.timestamp_iso || latestReg.call_time_iso;
+          const oldestTime = oldestReg.timestamp_iso || oldestReg.call_time_iso;
+          if (kpiLastRegEl) kpiLastRegEl.textContent = formatDateTimeFull(latestTime || compData.lastRegressionTime);
+          if (kpiFirstRegEl) kpiFirstRegEl.textContent = formatDateTimeFull(oldestTime || compData.firstRegressionTime || latestTime);
         } else {
-          kpiLastRegEl.textContent = '-';
+          if (kpiLastRegEl) kpiLastRegEl.textContent = (compData.lastRegressionTime && compData.lastRegressionTime !== '-') ? formatDateTimeFull(compData.lastRegressionTime) : '-';
+          if (kpiFirstRegEl) kpiFirstRegEl.textContent = (compData.firstRegressionTime && compData.firstRegressionTime !== '-') ? formatDateTimeFull(compData.firstRegressionTime) : '-';
         }
       }
 
@@ -2674,6 +2677,7 @@
       updateKpis({
         comparison: rawComparisonList,
         regressionsTimeCount: rawRegressionsList.length,
+        firstRegressionTime: d.firstRegressionTime || '-',
         lastRegressionTime: d.lastRegressionTime || '-',
         todaySlaStats: d.todaySlaStats,
         cacheStats: d.cacheStats

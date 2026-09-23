@@ -1,0 +1,143 @@
+{
+    "requestId": 1266638,
+    "request": {
+        "errorCode": "0.e60f1702.1789495538.e80c39b",
+        "traceForwardLogs": false
+    },
+    "executionStatus": "SUCCESS",
+    "createdTime": "2026-09-15T18:07:35Z",
+    "completedTime": "2026-09-15T18:07:43Z",
+    "createdBy": "wesley.melo@tse.jus.br",
+    "result": {
+        "wafDetails": "34f3_335766|60423780|",
+        "wafDetailsUrl": "/apps/security-config/#/next/configs/127519/versions/36/policies/34f3_335766",
+        "wsaUrl": "/apps/securitycenter?view=ng-web-security-analytics&selectedView=statistics&configSelector=127519&startTime=1789495238262&endTime=1789495838262&dashboard=%5B%5B%221%22,0,0,2,4%5D,%5B%222%22,0,2,2,4%5D%5D&widgets=%5B%5B%221%22,1,%22trans.url%22,0,%22%22%5D,%5B%222%22,3,%22trans.url%22,0,%22%22%5D%5D&filters=%5B%5B%22in%22%2C%22trans.method%22%2C%5B%22GET%22%5D%2Ctrue%5D%2C%5B%22in%22%2C%22trans.userAgent%22%2C%5B%22Mozilla%2F5.0%20%28Windows%20NT%2010.0%3B%20Win64%3B%20x64%29%20TSE-Audit%2F2.0%22%5D%2Ctrue%5D%2C%5B%22in%22%2C%22trans.policyId%22%2C%5B%2234f3_335766%22%5D%2Ctrue%5D%2C%5B%22in%22%2C%22request_id%22%2C%5B%22e80c39b%22%5D%2Ctrue%5D%2C%5B%22in%22%2C%22trans.ip%22%2C%5B%22200.166.193.254%22%5D%2Ctrue%5D%5D&accountId=F-AC-813330",
+        "propertyName": "resultados-sim.tse.jus.br_2026",
+        "propertyUrl": "/apps/property-manager/#/property?gid=320369&aid=11673130",
+        "url": "https://resultados-sim.tse.jus.br/simulado/simulado2026/ele2026/21272/dados/sp/sp-c0006-e021272-u.json?nocache=1789495538192",
+        "cpCode": 2029478,
+        "httpResponseCode": 200,
+        "date": "2026-09-15T18:05:38Z",
+        "epochTime": 1789495538,
+        "connectingIp": {
+            "ip": "200.166.193.254",
+            "ipLocation": {
+                "city": "BRASILIA",
+                "regionCode": "DF",
+                "countryCode": "BR",
+                "asNumber": 4230
+            },
+            "stringValue": "200.166.193.254 (Brasilia, DF, BR) (ASN 4230)"
+        },
+        "edgeServerIp": {
+            "ip": "2.23.15.230",
+            "ipLocation": {
+                "city": "BRASILIA",
+                "regionCode": "DF",
+                "countryCode": "BR",
+                "asNumber": 20940
+            },
+            "stringValue": "2.23.15.230 (Brasilia, DF, BR) (ASN 20940)"
+        },
+        "cacheKeyHostname": "tse-resultados-sim-5.us-iad-18.linodeobjects.com",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0",
+        "clientRequestMethod": "GET",
+        "logLines": {
+            "logs": [
+                {
+                    "dateTime": "2026-09-15T18:05:38.262Z",
+                    "logType": "r",
+                    "edgeIp": "2.23.15.230",
+                    "clientIp": "200.166.193.254",
+                    "forwardHostname": "-",
+                    "forwardIp": "-",
+                    "cpCode": "2029478",
+                    "sslVersion": "D",
+                    "httpMethod": "GET",
+                    "httpStatus": "200",
+                    "error": "-",
+                    "contentType": "application/json",
+                    "objectStatus": "zeV",
+                    "objectStatus2": "K",
+                    "objectStatus3": "sD",
+                    "bytesServed": "53788",
+                    "bytesReceived": "-",
+                    "contentBytesServed": "53092",
+                    "objectSize": "53092",
+                    "timeTaken": "0",
+                    "turnaroundTime": "1",
+                    "hostHeader": "resultados-sim.tse.jus.br",
+                    "arl": "/~/311/2029478/~/tse-resultados-sim-5.us-iad-18.linodeobjects.com/simulado/simulado2026/ele2026/21272/dados/sp/sp-c0006-e021272-u.json?nocache=1789495538192",
+                    "forwardArl": "-",
+                    "referer": "-",
+                    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TSE-Audit/2.0",
+                    "cookie": "^",
+                    "forwardErrors": "-",
+                    "customField": "^"
+                },
+                {
+                    "dateTime": "2026-09-15T18:05:38.270Z",
+                    "logType": "f",
+                    "edgeIp": "2.23.15.230",
+                    "clientIp": "p",
+                    "forwardHostname": "mch-ff-so.akasrg.akamai.com",
+                    "forwardIp": "23.196.224.234",
+                    "cpCode": "2029478",
+                    "sslVersion": "TLSv1.3",
+                    "httpMethod": "GET",
+                    "httpStatus": "200",
+                    "error": "-",
+                    "contentType": "application/json",
+                    "objectStatus": "paM",
+                    "objectStatus2": "8",
+                    "objectStatus3": "-",
+                    "bytesServed": "-",
+                    "bytesReceived": "415829",
+                    "contentBytesServed": "-",
+                    "objectSize": "-",
+                    "timeTaken": "90",
+                    "turnaroundTime": "296",
+                    "hostHeader": "-",
+                    "arl": "/=/311/2029478/1m/tse-resultados-sim-5.us-iad-18.linodeobjects.com/simulado/simulado2026/ele2026/21272/dados/sp/sp-c0006-e021272-u.json?nocache=1789495538192",
+                    "forwardArl": "-",
+                    "referer": "-",
+                    "userAgent": "-",
+                    "cookie": "-",
+                    "forwardErrors": "-",
+                    "customField": "-"
+                }
+            ],
+            "legend": {
+                "logType": {
+                    "r": "(r) response to client",
+                    "f": "(f) going forward to forward hostname"
+                },
+                "rObjectStatus": {
+                    "e": "An edge server served the last byte of the object to the client, whether the request is of byte-range type or not. If a range request was made, it means the edge server completed serving the a range request that included the last byte.",
+                    "V": "The object TTL was set in metadata.",
+                    "z": "The response was served to the client 'Content-Encoded: gzipped'."
+                },
+                "rObjectStatus2": {
+                    "K": "The WAF feature was enabled."
+                },
+                "rObjectStatus3": {
+                    "s": "SNI is enabled.",
+                    "D": "The request resulted in a download receipt being generated."
+                },
+                "fObjectStatus": {
+                    "p": "Akamai contacted another hierarchy parent edge server.",
+                    "a": "Whether SureRoute is enabled.",
+                    "M": "The request went forward to a metrocache backend. This flag will also be indicated on any sureroute mid-tier hops that might occur between metrocache frontends and backends."
+                },
+                "fObjectStatus2": {
+                    "8": "The request is cacheable, regardless to 'icp.probabilistic' and decisions to spread requests to all the machines in the region."
+                }
+            }
+        },
+        "grepUrl": "/edge-diagnostics/v1/grep?edgeIp=2.23.15.230&cpCode=2029478&start=2026-09-15T18:00:38Z&end=2026-09-15T18:10:38Z&httpStatusCode=200&userAgent=Mozilla/5.0%20(Windows%20NT%2010.0;%20Win64;%20x64)%20TSE-Audit/2.0&clientIp=%5E&arl=/~/311/2029478/~/tse-resultados-sim-5.us-iad-18.linodeobjects.com/simulado/simulado2026/ele2026/21272/dados/sp/sp-c0006-e021272-u.json?nocache%3D1789495538192"
+    },
+    "suggestedActions": [
+        "Check for long times.",
+        "Check content length/bytes served."
+    ]
+}

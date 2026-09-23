@@ -91,12 +91,13 @@ Este monitor foi concebido para responder, em tempo real e com rigor pericial, a
 
 ### 3. Persistência Forense e Histórico de Versões
 * **Banco SQLite em modo WAL (`tdtot_auditoria.db`):** Registro de alta concorrência contendo:
-  * `leituras`: Histórico completo de cada leitura feita (timestamp unix, servidor, data, hora, idg, hash).
+  * `leituras`: Histórico completo de cada leitura feita (timestamp unix, servidor, data, hora, idg, hash, last_modified_unix).
   * `comparativos`: Último estado comparativo consolidado de cada arquivo.
-  * `regressoes`: Log imutável de todas as regressões temporais reais identificadas.
+  * `regressoes`: Log imutável de todas as regressões temporais reais identificadas (Ghost Cache Akamai > 60s).
+  * `incidentes_dessincronia`: Log pericial de violações da tolerância de dessincronia da Origem TSE (> 90s).
 * **Repositório de Versões (`versoes/`):** Gravação contínua de todos os snapshots de versões coletadas, organizada na árvore de pastas da URL com nome carimbado por ambiente (`HMG`/`SIM`), data (`dg`), hora (`hg`) e `idg`.
 * **Evidências Brutas de Incidentes (`evidencias_raw/`):** Quando uma regressão temporal é detectada, o pacote com headers e metadados técnicos é assinado e salvo para perícia.
-* **Logs CSV/Texto:** `historico_comparativo.csv`, `regressoes_detectadas.csv` e `regressoes_detectadas.log`.
+* **Logs CSV/Texto:** `historico_comparativo.csv`, `regressoes_detectadas.csv`, `regressoes_detectadas.log` e `incidentes_dessincronia.csv`.
 
 ---
 
@@ -116,9 +117,10 @@ Abra o PowerShell na pasta do projeto e execute:
 .\iniciar_monitor.ps1
 ```
 O script irá:
-1. Verificar se o Chrome de depuração está ativo na porta `9222`. Se não estiver, inicializa o Chrome com perfil dedicado de debug apontando para o sistema de Resultados.
-2. Iniciar o servidor Node.js `monitor_tdtot.js`.
-3. Abrir o Dashboard em `http://127.0.0.1:3333`.
+1. **Validar o Node.js**: Verifica se o Node.js está instalado e se possui versão compatível (>= 22.5.0 para suporte ao `node:sqlite`). Se não estiver instalado, providencia a instalação automática via `winget` ou download direto do instalador oficial (`.msi`).
+2. **Inicializar o Chrome CDP**: Verifica se o Chrome de depuração está ativo na porta `9222`. Se não estiver, inicializa o Chrome com perfil dedicado de debug apontando para o sistema de Resultados.
+3. **Iniciar o Monitor**: Executa o servidor Node.js `monitor_tdtot.js`.
+4. **Abrir o Dashboard**: Acessível em `http://127.0.0.1:3333`.
 
 ### Opção 2: Inicialização Manual
 1. Inicie o Chrome em modo de depuração remota:
@@ -145,16 +147,25 @@ O Dashboard (`http://127.0.0.1:3333`) atualiza automaticamente a cada 4 segundos
 | :--- | :--- | :--- |
 | **Arquivos Monitorados** | Total | Total de arquivos do catálogo monitorados ativamente na sessão. |
 | **Exibidos / Filtrados** | Total Visível | Número de arquivos exibidos no momento conforme os filtros ativos. |
-| **Regressão Hora** | **Quantidade** | Total de regressões temporais reais detectadas no período. |
+| **Regressão Hora** | **Quantidade** | Total de regressões temporais reais detectadas no período (Ghost Cache Akamai > 60s). |
 | | **Última Ocorrência** | Horário exato (`HH:mm:ss`) em que ocorreu a última regressão. |
-| **Cache (SLAs Acumulados)** | **Atrasados Agora** | Quantidade instantânea de arquivos desatualizados no cache neste segundo. |
-| | **Média** | Tempo médio que os arquivos levam para sincronizar da fonte ao cache. |
-| | **P90** | 90% dos arquivos sincronizam neste tempo ou menos. |
-| | **P95** | 95% dos arquivos sincronizam neste tempo ou menos. |
-| | **P99** | 99% dos arquivos sincronizam neste tempo ou menos. |
-| | **P100 (Máx)** | Tempo máximo de propagação registrado no dia (caso mais lento). |
+| **SLA & Sincronização** | **Tolerâncias** | Tolerância de Dessincronia: **90s (TSE)** \| Tolerância de Propagação: **60s (Akamai)**. |
+| *(Matriz 2x7)* | **DESSINCRONIZADOS** | Métricas (**QTD**, **MÉDIA**, **P90**, **P95**, **P99**, **P100**) de defasagem de arquivos entre a geração na Origem (`dg/hg`) e a disponibilização na réplica. <br>🚨 *Quando a dessincronia ultrapassa 90s, gera um **Incidente de Dessincronia** (auditado isoladamente, sem poluir a tabela de regressões).* |
+| | **EM PROPAGAÇÃO** | Métricas (**QTD**, **MÉDIA**, **P90**, **P95**, **P99**, **P100**) do tempo de convergência entre PoPs e lâminas da CDN Akamai, medido desde a 1ª detecção até a estabilização. <br>🚨 *Se uma lâmina servir versão antiga após decorridos > 60s da detecção da nova versão, confirma-se **Regressão de Cache (Ghost Cache)**.* |
 
-> 💡 **Nota sobre os SLAs:** As métricas de SLA (`Média`, `P90`, `P95`, `P99`, `P100`) consideram **todos os eventos de sincronização ocorridos desde a 00:00:00 do dia atual**, recalculando dinamicamente ao aplicar filtros de UF ou busca na tabela.
+> 💡 **Nota sobre a Matriz de SLA:** As métricas de SLA (`MÉDIA`, `P90`, `P95`, `P99`, `P100`) consideram **todos os eventos de sincronização e telemetria ocorridos desde o marco zero da rodada ativa**, recalculando dinamicamente ao selecionar réplicas específicas ou aplicar filtros de UF/busca na tabela.
+
+### Console Terminal (Box de Inicialização e Periódico)
+O monitor exibe periodicamente e na inicialização o quadro padronizado de SLA no console:
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│ SLA   Tolerância de Dessincronia: 90s (TSE)  Tolerância de Propagação: 60s (Akamai)  │
+│                                                                                     │
+│                     QTD   MÉDIA    P90      P95      P99      P100                  │
+│ DESSINCRONIZADOS    0     0m 14s   0m 18s   0m 19s   0m 22s   0m 25s                │
+│ EM PROPAGAÇÃO       0     0m 14s   0m 18s   0m 19s   0m 22s   0m 25s                │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Colunas da Tabela de Auditoria
 1. **Classificação:** Badge visual de criticidade (`NORMAL`, `CACHE_ATRASADO`, `REGRESSAO_TEMPORAL`, `ERRO_COLETA`).
@@ -346,6 +357,14 @@ O sistema suporta a **auditoria contínua de múltiplos servidores em paralelo (
 * **Modo Multi-Nós (3 ou mais Servidores):** A tabela sintetiza os nós em uma coluna consolidada de réplicas com badges individuais por nó (`SIM: ⚡ 0m 00s`, `SLAVE1: ⏱️ -15s`), além do botão **`🔍 Matriz Multi-Nós`** que abre uma tabela comparativa ampliada inspecionando todos os servidores simultaneamente lado a lado para aquele arquivo (IP, DG/HG, IDG, Delta, SLA, TTL e ETag).
 
 ### 4. Endpoints REST da API
+* `GET /api/comparison`: Retorna o snapshot completo de auditoria em tempo real, incluindo lista de arquivos, deltas, matriz de SLA (`desyncStats` e `propagationStats`) e contadores de anomalias.
+* `GET /api/incidentes-dessincronia`: Retorna a lista pericial de arquivos cuja dessincronização ultrapassou a tolerância TSE (padrão 90s).
+* `GET /download/csv-incidentes-dessincronia`: Exporta o arquivo `incidentes_dessincronia.csv` diretamente pelo navegador.
+* `GET /api/configuracoes` e `POST /api/configuracoes`: Leitura e atualização com hot-reload dos 4 parâmetros de polling e tolerância:
+  1. *Intervalo de Polling na Matriz (Origem)* (padrão: 10s)
+  2. *Intervalo de Polling nas Réplicas* (padrão: 10s)
+  3. *Tolerância de Propagação - Critério Akamai* (padrão: 60s)
+  4. *Tolerância de Dessincronia - Critério TSE* (padrão: 90s)
 * `GET /api/servidores`: Retorna a lista de servidores cadastrados e indica qual é a Origem ativa.
 * `POST /api/servidores/salvar`: Cria ou atualiza um nó (`chave`, `nome`, `baseUrl`, `papel`, `ativo`).
 * `POST /api/servidores/toggle`: Ativa ou pausa o polling de um servidor.
@@ -395,6 +414,7 @@ O sistema suporta a **auditoria contínua de múltiplos servidores em paralelo (
 ├── historico_comparativo.csv    # Exportação em CSV do histórico comparativo
 ├── regressoes_detectadas.csv    # Exportação em CSV das regressões registradas
 ├── regressoes_detectadas.log    # Log textual das anomalias cronológicas
+├── incidentes_dessincronia.csv  # Exportação em CSV dos incidentes de dessincronia (> 90s)
 ├── evidencias_raw/              # Dossiê contendo os payloads JSON brutos das anomalias
 ├── versoes/                     # Repositório contínuo de snapshots na estrutura de URL
 └── temp_zips/                   # Armazenamento temporário de arquivos ZIP de download
